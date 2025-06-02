@@ -1,0 +1,85 @@
+import { Link, useNavigate, NavLink, useLocation } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import { useAuth } from '@/contexts/AuthContext';
+import { useEffect, useState } from 'react';
+
+export function MainNav() {
+  const { user, logout } = useAuth();
+  const [userRoles, setUserRoles] = useState({
+    isAdmin: false,
+    isProjectManager: false
+  });
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (user?.roles) {
+      setUserRoles({
+        isAdmin: user.roles.some((role: string | { name: string }) => 
+          typeof role === 'string' ? role === 'admin' : role.name === 'admin'
+        ),
+        isProjectManager: user.roles.some((role: string | { name: string }) => 
+          typeof role === 'string' ? role === 'project_manager' : role.name === 'project_manager'
+        )
+      });
+    }
+  }, [user]);
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
+
+  if (!user) return null;
+
+  return (
+    <header className="border-b">
+      <div className="container mx-auto px-4 py-3 flex justify-between items-center">
+        <div className="flex items-center space-x-6">
+          <Link to="/dashboard" className="text-lg font-semibold">
+            Task Manager
+          </Link>
+          <nav className="hidden md:flex items-center space-x-4">
+            <NavLink
+              to="/dashboard"
+              className={({ isActive }) => 
+                `text-sm font-medium ${isActive ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'} transition-colors`
+              }
+              onClick={(e) => {
+                // Prevent navigation if already on dashboard
+                if (window.location.pathname === '/dashboard') {
+                  e.preventDefault();
+                }
+              }}
+            >
+              Dashboard
+            </NavLink>
+            {userRoles.isAdmin && (
+              <Link
+                to="/admin"
+                className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Admin
+              </Link>
+            )}
+            {userRoles.isProjectManager && (
+              <Link
+                to="/project-manager/projects"
+                className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Project Manager
+              </Link>
+            )}
+          </nav>
+        </div>
+        <div className="flex items-center space-x-4">
+          <span className="text-sm text-muted-foreground">
+            {user.name} ({user.email})
+          </span>
+          <Button variant="outline" size="sm" onClick={handleLogout}>
+            Logout
+          </Button>
+        </div>
+      </div>
+    </header>
+  );
+}
