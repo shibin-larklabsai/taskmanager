@@ -31,7 +31,6 @@ const statusOptions = [
   { value: 'PLANNING', label: 'Planned' },
   { value: 'IN_PROGRESS', label: 'In Progress' },
   { value: 'COMPLETED', label: 'Completed' },
-  { value: 'CANCELLED', label: 'Cancelled' },
 ] as const;
 
 type StatusType = typeof statusOptions[number]['value'];

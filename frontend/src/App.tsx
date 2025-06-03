@@ -1,4 +1,5 @@
-import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { Route, Routes, Navigate, Outlet } from 'react-router-dom';
+import { useEffect } from 'react';
 import { Toaster } from '@/components/ui/toaster';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { SocketProvider } from '@/contexts/SocketContext';
@@ -8,10 +9,18 @@ import { DashboardPage } from '@/pages/DashboardPage';
 import { AdminPage } from '@/pages/AdminPage';
 import { UsersPage } from '@/pages/admin/UsersPage';
 import { ProjectsPage } from '@/pages/admin/ProjectsPage';
+import { AdminLayout } from '@/components/admin/AdminLayout';
 import MainLayout from '@/components/layout/MainLayout';
 import ConnectionTest from './components/ConnectionTest';
-import { projectManagerRoutes } from '@/routes/projectManagerRoutes';
-import { ProjectManagerRoute } from '@/components/project-manager/ProjectManagerRoute';
+import { ProjectManagerLayout } from '@/components/project-manager/ProjectManagerLayout';
+import { ProjectManagerDashboard } from '@/pages/project-manager/ProjectManagerDashboard';
+import { ProjectManagerTasks } from '@/pages/project-manager/ProjectManagerTasks';
+import { TeamAssignment } from '@/pages/project-manager/TeamAssignment';
+import TasksPage from '@/pages/project-manager/TasksPage';
+import { TaskDetailPage } from '@/pages/project-manager/TaskDetailPage';
+import { CreateTaskPage } from '@/pages/project-manager/CreateTaskPage';
+import { EditTaskPage } from '@/pages/project-manager/EditTaskPage';
+import { developerRoutes } from '@/routes/developerRoutes';
 
 // Layout wrapper
 const LayoutWrapper = ({ children }: { children: React.ReactNode }) => (
@@ -74,6 +83,44 @@ const AdminRoute = ({ children }: { children: React.ReactNode }) => {
   return <>{children}</>;
 };
 
+// Role-based redirect component
+const RoleBasedRedirect = () => {
+  const { user } = useAuth();
+
+  useEffect(() => {
+    if (user) {
+      const isAdmin = user.roles?.some(role =>
+        (typeof role === 'string' && role === 'admin') ||
+        (typeof role === 'object' && role.name === 'admin')
+      );
+      
+      const isProjectManager = user.roles?.some(role => 
+        (typeof role === 'string' && role === 'project_manager') || 
+        (typeof role === 'object' && role.name === 'project_manager')
+      );
+      
+      const isDeveloper = user.roles?.some(role =>
+        (typeof role === 'string' && role === 'developer') ||
+        (typeof role === 'object' && role.name === 'developer')
+      );
+
+      if (isAdmin) {
+        window.location.href = '/dashboard';
+      } else if (isProjectManager) {
+        window.location.href = '/project-manager';
+      } else if (isDeveloper) {
+        window.location.href = '/developer';
+      } else {
+        // Default redirect if no specific role matches
+        window.location.href = '/';
+      }
+    }
+  }, [user]);
+
+  // Show a loading state or null while redirecting
+  return null;
+};
+
 // Main App Layout
 function AppLayout() {
   return (
@@ -92,20 +139,23 @@ function AppLayout() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<DashboardPage />} />
+        <Route 
+          index 
+          element={
+            <RoleBasedRedirect />
+          } 
+        />
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="test-connection" element={<ConnectionTest />} />
       </Route>
 
       {/* Admin Routes */}
       <Route
-        path="/admin"
+        path="/admin/*"
         element={
           <ProtectedRoute>
             <AdminRoute>
-              <LayoutWrapper>
-                <Outlet />
-              </LayoutWrapper>
+              <AdminLayout />
             </AdminRoute>
           </ProtectedRoute>
         }
@@ -120,26 +170,51 @@ function AppLayout() {
         path="/project-manager"
         element={
           <ProtectedRoute>
-            <ProjectManagerRoute>
-              <LayoutWrapper>
-                <Outlet />
-              </LayoutWrapper>
-            </ProjectManagerRoute>
+            <LayoutWrapper>
+              <ProjectManagerLayout />
+            </LayoutWrapper>
           </ProtectedRoute>
         }
       >
-        {projectManagerRoutes.map((route) => (
-          <Route key={route.path} path={route.path} element={route.element}>
-            {route.children?.map((childRoute) => (
-              <Route
-                key={childRoute.path || 'index'}
-                index={childRoute.index}
-                path={childRoute.path}
-                element={childRoute.element}
-              />
-            ))}
-          </Route>
-        ))}
+        <Route index element={<ProjectManagerDashboard />} />
+        <Route path="projects" element={<ProjectManagerTasks />} />
+        <Route path="team" element={<TeamAssignment />} />
+        <Route path="tasks">
+          <Route index element={<TasksPage />} />
+          <Route path="new" element={<CreateTaskPage />} />
+          <Route path=":taskId" element={<TaskDetailPage />} />
+          <Route path=":taskId/edit" element={<EditTaskPage />} />
+        </Route>
+      </Route>
+
+      {/* Developer Routes */}
+      <Route path="/developer">
+        <Route
+          element={
+            <ProtectedRoute>
+              <LayoutWrapper>
+                <Outlet />
+              </LayoutWrapper>
+            </ProtectedRoute>
+          }
+        >
+          {developerRoutes.map((route) => (
+            <Route
+              key={route.path || 'index'}
+              path={route.path}
+              element={route.element}
+            >
+              {route.children?.map((childRoute) => (
+                <Route
+                  key={childRoute.path || 'index'}
+                  index={childRoute.index}
+                  path={childRoute.path}
+                  element={childRoute.element}
+                />
+              ))}
+            </Route>
+          ))}
+        </Route>
       </Route>
       
       {/* Catch all - redirect to login */}

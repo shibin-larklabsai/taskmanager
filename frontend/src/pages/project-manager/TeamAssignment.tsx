@@ -1,162 +1,182 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useMemo } from 'react';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
-import { fetchProjects, assignProjectToMember } from '@/services/teamService';
+import { assignProjectToMember, fetchProjects, updateProjectMember, removeProjectMember, type Project, type ProjectMember } from '@/services/teamService';
+import { get } from '@/lib/api';
+import { Pencil, Trash2 } from 'lucide-react';
 
 interface User {
   id: number;
   name: string;
   email: string;
-}
-
-interface ProjectMember {
-  id: number;
-  projectId: number;
-  userId: number;
-  role: string;
-  user: User;
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface Project {
-  id: number;
-  name: string;
-  description: string;
-  status: 'PLANNED' | 'IN_PROGRESS' | 'COMPLETED' | 'ON_HOLD' | 'CANCELLED';
-  startDate: string;
-  endDate: string | null;
-  createdById: number;
-  createdAt: string;
-  updatedAt: string;
-  deletedAt: string | null;
-  creator: User;
-  projectMembers: ProjectMember[];
-}
-
-interface TeamMember extends User {
-  role: string;
-  assignedProjects?: Array<{
-    id: number;
-    name: string;
-  }>;
+  roles: string[];
+  createdAt?: string;
 }
 
 export function TeamAssignment() {
   const queryClient = useQueryClient();
   const [selectedProject, setSelectedProject] = useState<string>('');
-  const [selectedMember, setSelectedMember] = useState<string>('');
-  // Only show planned projects in the dropdown
+  const [selectedUser, setSelectedUser] = useState<string>('');
+  const [editingAssignment, setEditingAssignment] = useState<{projectId: string, userId: string} | null>(null);
 
-  // Mock data for development
-  // Fetch team members and projects
-  const { data: projectsData = [], isLoading: isLoadingProjects } = useQuery<Project[]>({
+  // Fetch all projects
+  const { data: allProjects = [], isLoading: isLoadingProjects } = useQuery<Project[]>({
     queryKey: ['projects'],
     queryFn: fetchProjects,
-    select: (data) => Array.isArray(data) ? data : []
   });
 
-  // Transform project members into team members
-  const teamMembers = useMemo(() => {
-    const membersMap = new Map<number, TeamMember>();
+  // Fetch all users (project managers can now access this endpoint)
+  const { data: allUsers = [], isLoading: isLoadingUsers } = useQuery<User[]>({
+    queryKey: ['allUsers'],
+    queryFn: async (): Promise<User[]> => {
+      const response = await get<{ users: User[] }>('/users');
+      return response.data?.users || [];
+    },
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+
+  // Filter planned projects and get all users
+  const { plannedProjects, allUsersList } = useMemo(() => {
+    const planned = allProjects.filter((project: Project) => project.status === 'PLANNING');
     
-    projectsData.forEach((project: Project) => {
-      project.projectMembers.forEach((member: ProjectMember) => {
-        if (!membersMap.has(member.userId)) {
-          membersMap.set(member.userId, {
-            ...member.user,
-            role: member.role,
-            assignedProjects: []
-          });
-        }
-        const teamMember = membersMap.get(member.userId)!;
-        teamMember.assignedProjects = [
-          ...(teamMember.assignedProjects || []),
-          {
-            id: project.id,
-            name: project.name
-          }
-        ];
-      });
-    });
-
-    return Array.from(membersMap.values());
-  }, [projectsData]);
-
-  // Filter projects to show only planned projects (case-sensitive check)
-  const plannedProjects = useMemo(() => {
-    console.log('All projects:', projectsData); // Debug log
-    const filtered = projectsData
-      .filter((project: Project) => {
-        console.log(`Project ${project.name} status:`, project.status); // Debug log
-        return project.status === 'PLANNED';
-      })
-      .map(project => ({
-        id: project.id,
-        name: project.name,
-        status: project.status,
-        startDate: project.startDate,
-        endDate: project.endDate
+    // Filter only developers
+    const usersList = allUsers
+      .filter((user: User) => user.roles?.[0]?.toLowerCase() === 'developer')
+      .map((user: User) => ({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: 'Developer'
       }));
-    console.log('Filtered planned projects:', filtered); // Debug log
-    return filtered;
-  }, [projectsData]);
+    
+    return {
+      plannedProjects: planned,
+      allUsersList: usersList
+    };
+  }, [allProjects, allUsers]);
+  
+  const isLoading = isLoadingProjects || isLoadingUsers;
+  
+  // Group users by role for better organization in the dropdown
+  const usersByRole = useMemo(() => {
+    const grouped: Record<string, typeof allUsersList> = {};
+    allUsersList.forEach(user => {
+      if (!grouped[user.role]) {
+        grouped[user.role] = [];
+      }
+      grouped[user.role].push(user);
+    });
+    return grouped;
+  }, [allUsersList]);
 
-  const isLoadingMembers = isLoadingProjects;
-
-  // Assign project mutation
+  // Mutation for assigning project to developer
   const assignMutation = useMutation({
-    mutationFn: async ({ projectId, memberId }: { projectId: string; memberId: string }) => {
-      return assignProjectToMember(memberId, projectId);
-    },
+    mutationFn: ({ projectId, userId }: { projectId: string; userId: string }) => 
+      assignProjectToMember(userId, projectId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['teamMembers'] });
+      toast.success('Developer assigned to project successfully');
       setSelectedProject('');
-      setSelectedMember('');
-      toast.success('Project assigned successfully');
+      setSelectedUser('');
+      setEditingAssignment(null);
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
     },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.message || 'Failed to assign project');
-    },
+    onError: (error: Error) => {
+      toast.error(`Failed to assign developer: ${error.message}`);
+    }
   });
 
-  const handleAssignProject = () => {
-    if (!selectedProject || !selectedMember) {
-      toast.error('Please select both project and team member');
+  // Mutation for updating project member role
+  const updateMemberMutation = useMutation({
+    mutationFn: ({ projectId, userId, role }: { projectId: string; userId: string; role: string }) => 
+      updateProjectMember(projectId, userId, role),
+    onSuccess: () => {
+      toast.success('Team member updated successfully');
+      setEditingAssignment(null);
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to update team member: ${error.message}`);
+    }
+  });
+
+  // Mutation for removing project member
+  const removeMemberMutation = useMutation({
+    mutationFn: ({ projectId, userId }: { projectId: string; userId: string }) => 
+      removeProjectMember(projectId, userId),
+    onSuccess: () => {
+      toast.success('Team member removed successfully');
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to remove team member: ${error.message}`);
+    }
+  });
+
+  const handleAssign = () => {
+    if (!selectedProject || !selectedUser) {
+      toast.error('Please select both project and developer');
       return;
     }
-    assignMutation.mutate({ 
+    assignMutation.mutate({ projectId: selectedProject, userId: selectedUser });
+  };
+
+  const handleEdit = (projectId: string, userId: string) => {
+    setEditingAssignment({ projectId, userId });
+    setSelectedProject(projectId);
+    setSelectedUser(userId);
+  };
+
+  const handleRemove = (projectId: string, userId: string) => {
+    if (window.confirm('Are you sure you want to remove this team member from the project?')) {
+      removeMemberMutation.mutate({ projectId, userId });
+    }
+  };
+
+  const handleUpdate = () => {
+    if (!selectedProject || !selectedUser) {
+      toast.error('Please select both project and developer');
+      return;
+    }
+    updateMemberMutation.mutate({ 
       projectId: selectedProject, 
-      memberId: selectedMember
+      userId: selectedUser,
+      role: 'DEVELOPER' // Default role for now, can be made dynamic if needed
     });
   };
 
-  if (isLoadingMembers || isLoadingProjects) {
-    return <div>Loading...</div>;
+  const handleCancelEdit = () => {
+    setEditingAssignment(null);
+    setSelectedProject('');
+    setSelectedUser('');
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold">Team Assignment</h1>
-        </div>
-
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Team Assignment</h1>
+      </div>
+      
       <Card>
         <CardHeader>
-          <CardTitle>Assign Project to Team Member</CardTitle>
+          <CardTitle>Assign Developer to Project</CardTitle>
         </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="text-sm font-medium">Select Project</label>
-              <Select 
-                value={selectedProject}
-                onValueChange={setSelectedProject}
-              >
+              <Select value={selectedProject} onValueChange={setSelectedProject}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select a project" />
                 </SelectTrigger>
@@ -166,84 +186,147 @@ export function TeamAssignment() {
                       {project.name}
                     </SelectItem>
                   ))}
-                  {plannedProjects.length === 0 && (
-                    <div className="px-3 py-2 text-sm text-gray-500">
-                      No projects found
-                    </div>
-                  )}
                 </SelectContent>
               </Select>
             </div>
 
             <div className="space-y-2">
               <label className="text-sm font-medium">Select Team Member</label>
-              <Select 
-                value={selectedMember}
-                onValueChange={setSelectedMember}
-              >
+              <Select value={selectedUser} onValueChange={setSelectedUser}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select a team member" />
                 </SelectTrigger>
                 <SelectContent>
-                  {teamMembers.map((member) => (
-                    <SelectItem key={member.id} value={member.id.toString()}>
-                      {member.name}
-                    </SelectItem>
+                  {Object.entries(usersByRole).map(([role, users]) => (
+                    <div key={role}>
+                      <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+                        {role.charAt(0).toUpperCase() + role.slice(1).toLowerCase()}
+                      </div>
+                      {users.map((user) => (
+                        <SelectItem key={user.id} value={user.id.toString()}>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{user.name}</span>
+                            <span className="text-muted-foreground text-xs">
+                              {user.email}
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </div>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-
-            <div className="flex items-end">
-              <Button 
-                onClick={handleAssignProject}
-                disabled={!selectedProject || !selectedMember || assignMutation.isPending}
-              >
-                {assignMutation.isPending ? 'Assigning...' : 'Assign Project'}
-              </Button>
-            </div>
           </div>
 
-          <div className="mt-8">
-            <h3 className="text-lg font-medium mb-4">Current Assignments</h3>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Team Member</TableHead>
-                  <TableHead>Assigned Projects</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {teamMembers.length > 0 ? (
-                  teamMembers.map((member) => (
-                    <TableRow key={member.id}>
-                      <TableCell className="font-medium">{member.name}</TableCell>
-                      <TableCell>
-                        {member.assignedProjects && member.assignedProjects.length > 0 ? (
-                          <div className="space-y-1">
-                            {member.assignedProjects.map((project) => (
-                              <div key={project.id} className="flex items-center">
-                                <span className="mr-2">•</span>
-                                <span>{project.name}</span>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground">No projects assigned</span>
-                        )}
+          <div className="flex justify-end gap-2">
+            {editingAssignment && (
+              <Button 
+                variant="outline"
+                onClick={handleCancelEdit}
+                disabled={assignMutation.isPending || updateMemberMutation.isPending}
+              >
+                Cancel
+              </Button>
+            )}
+            <Button 
+              onClick={editingAssignment ? handleUpdate : handleAssign}
+              disabled={!selectedProject || !selectedUser || assignMutation.isPending || updateMemberMutation.isPending}
+            >
+              {assignMutation.isPending || updateMemberMutation.isPending 
+                ? (editingAssignment ? 'Updating...' : 'Assigning...') 
+                : (editingAssignment ? 'Update Assignment' : 'Assign Team Member')}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Current Assignments</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-12">#</TableHead>
+                <TableHead>Project</TableHead>
+                <TableHead>Developer</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Role</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(() => {
+                // Get all projects that have at least one member assigned
+                const assignedProjects = plannedProjects.filter(
+                  (project: Project) => project.projectMembers?.length > 0
+                );
+
+                if (assignedProjects.length === 0) {
+                  return (
+                    <TableRow>
+                      <TableCell colSpan={3} className="text-center py-4 text-muted-foreground">
+                        No assignments found
                       </TableCell>
                     </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell colSpan={2} className="text-center">
-                      No team members found
+                  );
+                }
+
+                // Flatten the array to show one row per project-member pair, excluding owners
+                const allMembers = assignedProjects.flatMap((project: Project) => 
+                  (project.projectMembers || [])
+                    .filter((member: ProjectMember) => member.role !== 'OWNER')
+                    .map((member: ProjectMember) => ({
+                      project,
+                      member
+                    }))
+                );
+
+                if (allMembers.length === 0) {
+                  return (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center py-4 text-muted-foreground">
+                        No team member assignments found
+                      </TableCell>
+                    </TableRow>
+                  );
+                }
+
+
+                return allMembers.map(({ project, member }, index) => (
+                  <TableRow key={`${project.id}-${member.userId}`}>
+                    <TableCell className="font-medium">{index + 1}</TableCell>
+                    <TableCell>{project.name}</TableCell>
+                    <TableCell>{member.user?.name || 'Unknown User'}</TableCell>
+                    <TableCell>{member.user?.email || 'N/A'}</TableCell>
+                    <TableCell>{member.role}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          onClick={() => handleEdit(project.id.toString(), member.userId.toString())}
+                          disabled={removeMemberMutation.isPending}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          onClick={() => handleRemove(project.id.toString(), member.userId.toString())}
+                          disabled={removeMemberMutation.isPending}
+                        >
+                          <Trash2 className="h-4 w-4 text-red-500" />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
+                ));
+              })()}
+            </TableBody>
+          </Table>
         </CardContent>
       </Card>
     </div>

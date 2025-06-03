@@ -1,6 +1,7 @@
 import { DataTypes, Model, Optional } from 'sequelize';
 import sequelize from '../config/database';
 import type User from './user.model';
+import type Task from './task.model';
 
 export enum ProjectStatus {
   PLANNING = 'PLANNING',
@@ -42,6 +43,7 @@ export class Project extends Model<IProjectAttributes, IProjectCreationAttribute
   
   // Associations
   public creator?: User;
+  public tasks?: Task[];
   
   // Define the associate method for model relationships
   public static associate(models: any): void {
@@ -64,8 +66,13 @@ export class Project extends Model<IProjectAttributes, IProjectCreationAttribute
       foreignKey: 'projectId',
       as: 'projectMembers'
     });
+
+    // Project has many tasks
+    Project.hasMany(models.Task, {
+      foreignKey: 'projectId',
+      as: 'tasks'
+    });
   }
-  public members?: User[];
 }
 
 Project.init(

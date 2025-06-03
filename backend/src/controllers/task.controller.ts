@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { Task, TaskStatus, TaskPriority } from '../models/task.model.js';
 import { ProjectMember, ProjectRole } from '../models/project-member.model.js';
+import User from '../models/user.model.js';
 import { sequelize } from '../config/database.js';
 import { taskEventsService } from '../services/task-events.service.js';
 
@@ -139,15 +140,63 @@ export const TaskController = {
       if (priority) whereClause.priority = priority;
       if (assigneeId) whereClause.assignedToId = assigneeId;
 
-      // Only show tasks from projects the user is a member of
-      include.push({
-        model: ProjectMember,
+      // Get all project IDs where the user is a member
+      const userProjects = await ProjectMember.findAll({
         where: { userId },
-        attributes: [],
-        required: true,
+        attributes: ['projectId']
       });
+      
+      const projectIds = userProjects.map(pm => pm.projectId);
+      
+      console.log('User ID:', userId);
+      console.log('Project IDs user is member of:', projectIds);
+      
+      // If user is not a member of any projects, return empty array
+      if (projectIds.length === 0) {
+        return sendResponse(200, {
+          success: true,
+          data: [],
+          pagination: {
+            total: 0,
+            page: Number(page),
+            pages: 0,
+          },
+        });
+      }
+
+      // Only show tasks from projects the user is a member of
+      whereClause.projectId = projectIds;
+      
+      // If no specific assignee filter is set, show only tasks assigned to the current user
+      if (!assigneeId) {
+        whereClause.assignedToId = userId;
+      }
+
+      // Include createdBy and assignedTo user details
+      include.push(
+        {
+          model: User,
+          as: 'createdBy',
+          attributes: ['id', 'name', 'email']
+        },
+        {
+          model: User,
+          as: 'assignedTo',
+          attributes: ['id', 'name', 'email']
+        }
+      );
 
       const offset = (Number(page) - 1) * Number(limit);
+
+      console.log('Final where clause:', JSON.stringify(whereClause, null, 2));
+      console.log('Query options:', {
+        where: whereClause,
+        include,
+        limit: Number(limit),
+        offset,
+        order: [['createdAt', 'DESC']],
+        distinct: true
+      });
 
       const { count, rows: tasks } = await Task.findAndCountAll({
         where: whereClause,
@@ -155,6 +204,7 @@ export const TaskController = {
         limit: Number(limit),
         offset,
         order: [['createdAt', 'DESC']],
+        distinct: true, // Important for correct count when using includes
       });
 
       sendResponse(200, {

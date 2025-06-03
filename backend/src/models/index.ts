@@ -5,6 +5,8 @@ import Role from './role.model.js';
 import UserRole from './user-role.model.js';
 import Project from './project.model.js';
 import ProjectMember from './project-member.model.js';
+import Task from './task.model.js';
+import { Comment } from './comment.model.js';
 
 // Define the database object type
 type Models = {
@@ -30,7 +32,9 @@ const db = {
   Role,
   UserRole,
   Project,
-  ProjectMember
+  ProjectMember,
+  Task,
+  Comment
 };
 
 // Set up associations
@@ -59,7 +63,36 @@ if (User && Role && UserRole) {
   });
 }
 
+// Project-User many-to-many associations are defined in their respective model files
+
+// Define Comment associations
+if (Comment && User && Project) {
+  // Comment belongs to User
+  Comment.belongsTo(User, {
+    foreignKey: 'userId',
+    as: 'user',
+  });
+
+  // Comment belongs to Project
+  Comment.belongsTo(Project, {
+    foreignKey: 'projectId',
+    as: 'project',
+  });
+
+  // User has many Comments
+  User.hasMany(Comment, {
+    foreignKey: 'userId',
+    as: 'comments',
+  });
+
+  // Project has many Comments
+  Project.hasMany(Comment, {
+    foreignKey: 'projectId',
+    as: 'comments',
+  });
+}
+
 // All associations are now defined in their respective model files
 
-export { sequelize, User, Role, UserRole, Project, ProjectMember };
+export { sequelize, User, Role, UserRole, Project, ProjectMember, Task, Comment };
 export default db;

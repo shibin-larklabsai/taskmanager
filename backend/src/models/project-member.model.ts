@@ -116,6 +116,13 @@ ProjectMember.init(
     timestamps: true,
     paranoid: true,
     underscored: true,
+    indexes: [
+      {
+        unique: true,
+        fields: ['project_id', 'user_id'],
+        name: 'unique_project_user'
+      }
+    ],
     defaultScope: {
       attributes: {
         exclude: ['deletedAt']

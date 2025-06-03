@@ -2,7 +2,11 @@ import { Request, Response, RequestHandler, Response as ExpressResponse } from '
 import { validationResult, ValidationError as ExpressValidationError } from 'express-validator';
 import User from '../models/user.model';
 import Role from '../models/role.model';
-import { IUserResponse } from '../types/auth.types';
+import Project from '../models/project.model';
+import ProjectMember from '../models/project-member.model';
+import Task from '../models/task.model';
+import db from '../models/index.js';
+const { Project, ProjectMember, Task } = db;
 
 // Extend the Express Response type to include our custom methods
 declare global {
@@ -360,20 +364,20 @@ export const UserController = {
   },
 
   // Remove role from user (Admin only)
-  removeRole: async (req: IRequestWithUser, res: Response): Promise<Response> => {
-    const userId = parseUserId(req.params.userId);
-    const roleId = parseUserId(req.params.roleId);
-    
-    if (!userId || !roleId) {
-      return res.error('Invalid user ID or role ID', 400);
-    }
-
-    // Check if user is admin
-    if (!isAdmin(req)) {
-      return res.error('Forbidden', 403);
-    }
-
+  async removeRole(req: IRequestWithUser, res: Response): Promise<Response> {
     try {
+      const userId = parseUserId(req.params.userId);
+      const roleId = parseUserId(req.params.roleId);
+
+      if (!userId || !roleId) {
+        return res.error('Invalid user ID or role ID', 400);
+      }
+
+      // Check if user has permission (admin only for role management)
+      if (!isAdmin(req)) {
+        return res.error('Unauthorized: Admin access required', 403);
+      }
+
       const user = await User.findByPk(userId);
       if (!user) {
         return res.error('User not found', 404);
@@ -384,13 +388,71 @@ export const UserController = {
         return res.error('Role not found', 404);
       }
 
-      // Remove role from user
-      await (user as IUserWithRoles).removeRole(role);
+      await (user as unknown as IUserWithRoles).removeRole(role);
 
       return res.success({ message: 'Role removed successfully' });
     } catch (error) {
       console.error('Error removing role:', error);
-      return res.error('Server error', 500);
+      return res.error('Failed to remove role', 500);
     }
-  }
+  },
+
+  // Get projects for a specific user
+  async getUserProjects(req: IRequestWithUser, res: Response): Promise<Response> {
+    try {
+      // Get userId from params or use the authenticated user's ID
+      const userId = parseUserId(req.params.userId) || req.user?.id;
+      
+      if (!userId) {
+        return res.status(400).json({
+          success: false,
+          message: 'User ID is required'
+        });
+      }
+
+      // For the current user's projects, we don't need to check permissions
+      // as they can always see their own projects
+      if (userId !== req.user?.id && !isAdmin(req)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized: You can only view your own projects'
+        });
+      }
+
+      // Get all project memberships for the user
+      const projectMemberships = await ProjectMember.findAll({
+        where: { userId },
+        include: [
+          {
+            model: Project,
+            as: 'project',
+            attributes: ['id', 'name', 'description', 'status', 'startDate', 'endDate']
+          }
+        ]
+      });
+
+      // Transform the data to include only project information with role
+      const projects = projectMemberships.map(membership => ({
+        id: membership.project.id,
+        name: membership.project.name,
+        description: membership.project.description,
+        status: membership.project.status,
+        startDate: membership.project.startDate,
+        endDate: membership.project.endDate,
+        role: membership.role
+      }));
+
+      return res.status(200).json({
+        success: true,
+        data: projects
+      });
+    } catch (error) {
+      console.error('Error fetching user projects:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch user projects',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  },
 };

@@ -40,6 +40,12 @@ class User extends Model<IUserAttributes, IUserCreationAttributes> implements IU
       otherKey: 'projectId',
       as: 'projects'
     });
+
+    // User has many project memberships
+    User.hasMany(models.ProjectMember, {
+      foreignKey: 'userId',
+      as: 'projectMembers'
+    });
   }
 }
 

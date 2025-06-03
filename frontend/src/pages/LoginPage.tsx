@@ -40,16 +40,33 @@ export function LoginPage() {
       const user = await login(email, password);
       
       if (user) {
-        // Check if user is a project manager
-        const isProjectManager = user.roles?.some(role => 
-          (typeof role === 'string' && role === 'project_manager') || 
-          (typeof role === 'object' && role.name === 'project_manager')
-        );
-        
-        // Redirect based on role
+        // Determine user role and set redirect path
         let redirectPath = searchParams.get('returnUrl') || '/';
-        if (isProjectManager && redirectPath === '/') {
-          redirectPath = '/project-manager';
+        
+        // If no specific return URL is set, redirect based on role
+        if (redirectPath === '/') {
+          const isProjectManager = user.roles?.some(role => 
+            (typeof role === 'string' && role === 'project_manager') || 
+            (typeof role === 'object' && role.name === 'project_manager')
+          );
+          
+          const isDeveloper = user.roles?.some(role =>
+            (typeof role === 'string' && role === 'developer') ||
+            (typeof role === 'object' && role.name === 'developer')
+          );
+          
+          const isAdmin = user.roles?.some(role =>
+            (typeof role === 'string' && role === 'admin') ||
+            (typeof role === 'object' && role.name === 'admin')
+          );
+          
+          if (isAdmin) {
+            redirectPath = '/dashboard';
+          } else if (isProjectManager) {
+            redirectPath = '/project-manager';
+          } else if (isDeveloper) {
+            redirectPath = '/developer';
+          }
         }
         
         navigate(redirectPath, { replace: true });

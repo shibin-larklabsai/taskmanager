@@ -119,6 +119,8 @@ class App {
       const projectRoutes = (await import('./routes/project.routes.js')).default;
       const authRoutes = (await import('./routes/auth.routes.js')).default;
       const adminRoutes = (await import('./routes/admin.routes.js')).default;
+      const userRoutes = (await import('./routes/user.routes.js')).default;
+      const commentRoutes = (await import('./routes/comment.routes.js')).default;
 
       // Test database connection endpoint
       this.app.get('/api/test-db', async (_req, res) => {
@@ -145,6 +147,8 @@ class App {
       this.app.use('/api/projects', projectRoutes);
       this.app.use('/api/auth', authRoutes);
       this.app.use('/api/admin', adminRoutes);
+      this.app.use('/api/users', userRoutes);
+      this.app.use('/api/comments', commentRoutes);
 
       // Health check endpoints
       this.app.get('/api/health', (_, res) => {

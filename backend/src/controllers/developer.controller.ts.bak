@@ -1,0 +1,292 @@
+import { Request, Response } from 'express';
+import { Task, TaskStatus } from '../models/task.model.js';
+import { Comment } from '../models/comment.model.js';
+import { sequelize } from '../config/database.js';
+import { ICommentAttributes } from '../interfaces/comment.interface.js';
+
+// Extend Express types to include custom properties
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        id: number;
+        roles?: Array<{ name: string }>;
+      };
+    }
+  }
+}
+
+// Helper function to handle responses
+const sendResponse = (res: Response, status: number, data: any): void => {
+  res.status(status).json(data);
+};
+
+// Helper function to handle errors
+const handleError = (res: Response, status: number, message: string): void => {
+  sendResponse(res, status, { success: false, error: message });
+};
+
+export const DeveloperController = {
+  // Get tasks assigned to the current user
+  getMyTasks: async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        handleError(res, 401, 'Unauthorized');
+        return;
+      }
+
+      const tasks = await Task.findAll({
+        where: { assignedToId: userId },
+        include: [
+          { association: 'project', attributes: ['id', 'name'] },
+          { association: 'createdBy', attributes: ['id', 'name', 'email'] },
+          { association: 'comments', limit: 1, order: [['createdAt', 'DESC']] }
+        ],
+        order: [
+          ['dueDate', 'ASC'],
+          ['priority', 'DESC']
+        ]
+      });
+
+      sendResponse(res, 200, { success: true, data: tasks });
+    } catch (error) {
+      console.error('Error fetching tasks:', error);
+      handleError(res, 500, 'Failed to fetch tasks');
+    }
+  },
+
+  // Update task
+  updateTask: async (req: Request, res: Response): Promise<void> => {
+    const transaction = await sequelize.transaction();
+    
+    try {
+      const { id } = req.params;
+      const { description, dueDate, priority } = req.body;
+      const userId = req.user?.id;
+
+      if (!userId) {
+        await transaction.rollback();
+        handleError(res, 401, 'Unauthorized');
+        return;
+      }
+
+      const task = await Task.findByPk(id, { transaction });
+
+      if (!task) {
+        await transaction.rollback();
+        handleError(res, 404, 'Task not found');
+        return;
+      }
+
+      if (task.assigneeId !== userId) {
+        await transaction.rollback();
+        handleError(res, 403, 'Not authorized to update this task');
+        return;
+      }
+
+      const updateData: any = {};
+      if (description !== undefined) updateData.description = description;
+      if (dueDate !== undefined) updateData.dueDate = dueDate;
+      if (priority !== undefined) updateData.priority = priority;
+
+      await task.update(updateData, { transaction });
+      await transaction.commit();
+      
+      sendResponse(res, 200, { success: true, data: task });
+    } catch (error) {
+      await transaction.rollback();
+      console.error('Error updating task:', error);
+      handleError(res, 500, 'Failed to update task');
+    }
+  },
+
+  // Update task status
+  updateTaskStatus: async (req: Request, res: Response): Promise<void> => {
+    const transaction = await sequelize.transaction();
+    
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+      const userId = req.user?.id;
+
+      if (!userId) {
+        await transaction.rollback();
+        handleError(res, 401, 'Unauthorized');
+        return;
+      }
+
+      const task = await Task.findByPk(id, { transaction });
+      if (!task) {
+        await transaction.rollback();
+        handleError(res, 404, 'Task not found');
+        return;
+      }
+
+      // Verify the task is assigned to the current user
+      if (task.assigneeId !== userId) {
+        await transaction.rollback();
+        handleError(res, 403, 'Not authorized to update this task');
+        return;
+      }
+
+      // Update task status
+      task.status = status as TaskStatus;
+      
+      // If marking as done, set completedAt
+      if (status === TaskStatus.DONE) {
+        task.completedAt = new Date();
+      } else if (task.status === TaskStatus.DONE && status !== TaskStatus.DONE) {
+        // If changing from DONE to another status, clear completedAt
+        task.completedAt = null;
+      }
+
+      await task.save({ transaction });
+      await transaction.commit();
+
+      sendResponse(res, 200, { success: true, data: task });
+    } catch (error) {
+      await transaction.rollback();
+      console.error('Error updating task status:', error);
+      handleError(res, 500, 'Failed to update task status');
+    }
+  },
+
+  // Add comment to task
+  addComment: async (req: Request, res: Response): Promise<void> => {
+    const transaction = await sequelize.transaction();
+    
+    try {
+      const { id } = req.params;
+      const { content } = req.body;
+      const userId = req.user?.id;
+
+      if (!userId) {
+        await transaction.rollback();
+        handleError(res, 401, 'Unauthorized');
+        return;
+      }
+
+      const task = await Task.findByPk(id, { transaction });
+
+      if (!task) {
+        await transaction.rollback();
+        handleError(res, 404, 'Task not found');
+        return;
+      }
+
+      if (task.assignedToId !== userId) {
+        await transaction.rollback();
+        handleError(res, 403, 'Not authorized to comment on this task');
+        return;
+      }
+
+      const comment = await Comment.create({
+        content,
+        taskId: id,
+        userId,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      } as ICommentAttributes, { transaction });
+
+      await transaction.commit();
+      
+      sendResponse(res, 201, { success: true, data: comment });
+    } catch (error) {
+      await transaction.rollback();
+      console.error('Error adding comment:', error);
+      handleError(res, 500, 'Failed to add comment');
+    }
+  },
+
+  // Get task comments
+  getTaskComments: async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const userId = req.user?.id;
+
+      if (!userId) {
+        handleError(res, 401, 'Unauthorized');
+        return;
+      }
+
+      const task = await Task.findByPk(id);
+
+      if (!task) {
+        handleError(res, 404, 'Task not found');
+        return;
+      }
+
+      if (task.assignedToId !== userId) {
+        handleError(res, 403, 'Not authorized to view comments for this task');
+        return;
+      }
+
+      const comments = await Comment.findAll({
+        where: { taskId: id },
+        include: [
+          { 
+            association: 'user',
+            attributes: ['id', 'name', 'email']
+          }
+        ],
+        order: [['createdAt', 'DESC']]
+      });
+
+      sendResponse(res, 200, { success: true, data: comments });
+    } catch (error) {
+      console.error('Error fetching comments:', error);
+      handleError(res, 500, 'Failed to fetch comments');
+    }
+  },
+
+  // Update task progress
+  updateTaskProgress: async (req: Request, res: Response): Promise<void> => {
+    const transaction = await sequelize.transaction();
+    
+    try {
+      const { id } = req.params;
+      const { progress } = req.body;
+      const userId = req.user?.id;
+
+      if (!userId) {
+        await transaction.rollback();
+        handleError(res, 401, 'Unauthorized');
+        return;
+      }
+
+      const task = await Task.findByPk(id, { transaction });
+      if (!task) {
+        await transaction.rollback();
+        handleError(res, 404, 'Task not found');
+        return;
+      }
+
+      // Verify the task is assigned to the current user
+      if (task.assignedToId !== userId) {
+        await transaction.rollback();
+        handleError(res, 403, 'Not authorized to update this task');
+        return;
+      }
+
+      // Update task progress (assuming progress is a number 0-100)
+      const newProgress = Math.min(100, Math.max(0, progress));
+      
+      // If progress is 100%, mark as done if not already
+      if (newProgress === 100 && task.status !== TaskStatus.DONE) {
+        task.status = TaskStatus.DONE;
+        task.completedAt = new Date();
+      }
+
+      task.progress = newProgress;
+      await task.save({ transaction });
+      await transaction.commit();
+
+      sendResponse(res, 200, { success: true, data: task });
+    } catch (error) {
+      await transaction.rollback();
+      console.error('Error updating task progress:', error);
+      handleError(res, 500, 'Failed to update task progress');
+    }
+  }
+};

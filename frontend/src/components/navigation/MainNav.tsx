@@ -1,13 +1,15 @@
-import { Link, useNavigate, NavLink, useLocation } from 'react-router-dom';
+import { Link, useNavigate, NavLink } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
+
 import { useEffect, useState } from 'react';
 
 export function MainNav() {
   const { user, logout } = useAuth();
   const [userRoles, setUserRoles] = useState({
     isAdmin: false,
-    isProjectManager: false
+    isProjectManager: false,
+    isDeveloper: false
   });
   const navigate = useNavigate();
 
@@ -19,6 +21,9 @@ export function MainNav() {
         ),
         isProjectManager: user.roles.some((role: string | { name: string }) => 
           typeof role === 'string' ? role === 'project_manager' : role.name === 'project_manager'
+        ),
+        isDeveloper: user.roles.some((role: string | { name: string }) => 
+          typeof role === 'string' ? role === 'developer' : role.name === 'developer'
         )
       });
     }
@@ -40,13 +45,14 @@ export function MainNav() {
           </Link>
           <nav className="hidden md:flex items-center space-x-4">
             <NavLink
-              to="/dashboard"
+              to={userRoles.isDeveloper ? "/developer" : "/dashboard"}
               className={({ isActive }) => 
                 `text-sm font-medium ${isActive ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'} transition-colors`
               }
               onClick={(e) => {
-                // Prevent navigation if already on dashboard
-                if (window.location.pathname === '/dashboard') {
+                // Prevent navigation if already on the target page
+                const targetPath = userRoles.isDeveloper ? '/developer' : '/dashboard';
+                if (window.location.pathname === targetPath) {
                   e.preventDefault();
                 }
               }}
@@ -69,6 +75,7 @@ export function MainNav() {
                 Project Manager
               </Link>
             )}
+
           </nav>
         </div>
         <div className="flex items-center space-x-4">

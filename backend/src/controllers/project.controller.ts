@@ -3,6 +3,73 @@ import { Project, ProjectStatus } from '../models/project.model.js';
 import { ProjectMember, ProjectRole } from '../models/project-member.model.js';
 import User from '../models/user.model.js';
 
+// Helper function to check if user can manage project
+const canManageProject = async (userId: number, projectId: number): Promise<boolean> => {
+  console.log(`[canManageProject] Checking permissions for user ${userId} on project ${projectId}`);
+  
+  try {
+    // Check if user is admin
+    const user = await User.findByPk(userId, {
+      include: [{
+        model: User.associations.roles.target,
+        as: 'roles',
+        attributes: ['id', 'name'],
+        through: { attributes: [] },
+        required: false
+      }]
+    });
+
+    if (!user) {
+      console.log(`[canManageProject] User ${userId} not found`);
+      return false;
+    }
+
+    const userJson = user.toJSON() as any;
+    console.log(`[canManageProject] User roles:`, userJson.roles);
+    
+    // Check if user has admin role
+    const isAdmin = userJson.roles?.some((role: { name: string }) => role.name === 'admin');
+    if (isAdmin) {
+      console.log(`[canManageProject] User ${userId} is an admin, granting access`);
+      return true;
+    }
+
+    // Check if user has project_manager role
+    const isProjectManager = userJson.roles?.some((role: { name: string }) => 
+      role.name.toLowerCase() === 'project_manager' || role.name.toLowerCase() === 'manager'
+    );
+    
+    if (isProjectManager) {
+      console.log(`[canManageProject] User ${userId} is a project manager, granting access`);
+      return true;
+    }
+
+    // Check if user is owner/manager/developer of the project
+    console.log(`[canManageProject] Checking project membership for user ${userId}`);
+    const membership = await ProjectMember.findOne({
+      where: {
+        userId,
+        projectId,
+        role: [ProjectRole.OWNER, ProjectRole.MANAGER, ProjectRole.DEVELOPER]
+      },
+      raw: true,
+      nest: true
+    });
+
+    console.log(`[canManageProject] Membership check result:`, {
+      userId,
+      projectId,
+      hasMembership: !!membership,
+      membershipRole: membership?.role
+    });
+
+    return !!membership;
+  } catch (error) {
+    console.error('[canManageProject] Error:', error);
+    return false;
+  }
+};
+
 // Extend Express Request type to include user
 declare global {
   namespace Express {
@@ -15,7 +82,7 @@ declare global {
   }
 }
 
-class ProjectController {
+export class ProjectController {
   // Create a new project
   static createProject = async (req: Request, res: Response): Promise<void> => {
     let responseSent = false;
@@ -198,6 +265,14 @@ class ProjectController {
     try {
       const { projectId } = req.params;
       const updates = req.body;
+      const currentUserId = req.user?.id;
+
+      if (!currentUserId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+        });
+      }
 
       const project = await Project.findByPk(projectId);
       if (!project) {
@@ -207,19 +282,12 @@ class ProjectController {
         });
       }
 
-      // Check if user is authorized to update
-      const isOwner = await ProjectMember.findOne({
-        where: {
-          projectId: projectId,
-          userId: req.user?.id,
-          role: ProjectRole.OWNER,
-        },
-      });
-
-      if (!isOwner) {
+      // Check if user can manage the project
+      const canManage = await canManageProject(currentUserId, project.id);
+      if (!canManage) {
         return res.status(403).json({
           success: false,
-          message: 'Only project owners can update the project',
+          message: 'You do not have permission to update this project. Only project owners and managers can update projects.',
         });
       }
 
@@ -256,8 +324,17 @@ class ProjectController {
   static deleteProject = async (req: Request, res: Response): Promise<Response | void> => {
     try {
       const { projectId } = req.params;
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+        });
+      }
 
       const project = await Project.findByPk(projectId);
+
       if (!project) {
         return res.status(404).json({
           success: false,
@@ -265,22 +342,16 @@ class ProjectController {
         });
       }
 
-      // Check if user is authorized to delete
-      const isOwner = await ProjectMember.findOne({
-        where: {
-          projectId: projectId,
-          userId: req.user?.id,
-          role: ProjectRole.OWNER,
-        },
-      });
-
-      if (!isOwner) {
+      // Check if user can manage the project
+      const hasPermission = await canManageProject(userId, project.id);
+      if (!hasPermission) {
         return res.status(403).json({
           success: false,
-          message: 'Only project owners can delete the project',
+          message: 'You do not have permission to delete this project. Only project owners and managers can delete projects.',
         });
       }
 
+      // Soft delete the project
       await project.destroy();
 
       return res.status(200).json({
@@ -295,13 +366,21 @@ class ProjectController {
         error: error.message,
       });
     }
-  }
+  };
 
   // Add or update project member
   static updateProjectMember = async (req: Request, res: Response): Promise<Response | void> => {
     try {
       const { projectId, userId } = req.params;
       const { role } = req.body;
+      const currentUserId = req.user?.id;
+
+      if (!currentUserId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+        });
+      }
 
       // Check if project exists
       const project = await Project.findByPk(projectId);
@@ -312,33 +391,34 @@ class ProjectController {
         });
       }
 
-      // Check if user exists
-      const user = await User.findByPk(userId);
-      if (!user) {
+      // Check if the target user exists
+      const targetUser = await User.findByPk(userId);
+      if (!targetUser) {
         return res.status(404).json({
           success: false,
           message: 'User not found',
         });
       }
 
-      // Check if requester is authorized (must be project owner or manager)
-      const requesterMembership = await ProjectMember.findOne({
-        where: {
-          projectId,
-          userId: req.user?.id,
-          role: [ProjectRole.OWNER, ProjectRole.MANAGER],
-        },
-      });
-
-      if (!requesterMembership) {
+      // Check if current user can manage the project
+      const canManage = await canManageProject(currentUserId, project.id);
+      if (!canManage) {
         return res.status(403).json({
           success: false,
-          message: 'Only project owners or managers can update project members',
+          message: 'You do not have permission to manage members in this project.',
         });
       }
 
-      // Prevent changing owner role if there's only one owner
-      if (role !== ProjectRole.OWNER) {
+      // Check if this is an existing member being updated
+      const existingMember = await ProjectMember.findOne({
+        where: {
+          projectId,
+          userId,
+        },
+      });
+
+      // Only check owner count if we're changing an existing owner's role
+      if (existingMember?.role === ProjectRole.OWNER && role !== ProjectRole.OWNER) {
         const ownerCount = await ProjectMember.count({
           where: {
             projectId,
@@ -354,31 +434,46 @@ class ProjectController {
         }
       }
 
-      // Add or update project member
+      // Add or update the project member
       const [member] = await ProjectMember.upsert({
         projectId: parseInt(projectId, 10),
         userId: parseInt(userId, 10),
         role,
       });
 
+      // Fetch the updated member with user data
+      const updatedMember = await ProjectMember.findByPk(member.id, {
+        include: [
+          { model: User, as: 'user', attributes: ['id', 'name', 'email'] }
+        ]
+      });
+
       return res.status(200).json({
         success: true,
-        data: member,
+        data: updatedMember,
       });
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error updating project member:', error);
       return res.status(500).json({
         success: false,
         message: 'Failed to update project member',
-        error: error.message,
+        error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
-  }
+  };
 
-  // Remove member from project
-  static removeProjectMember = async (req: Request, res: Response) => {
+  // Remove a member from a project
+  static removeProjectMember = async (req: Request, res: Response): Promise<Response | void> => {
     try {
       const { projectId, userId } = req.params;
+      const currentUserId = req.user?.id;
+
+      if (!currentUserId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+        });
+      }
 
       // Check if project exists
       const project = await Project.findByPk(projectId);
@@ -389,7 +484,7 @@ class ProjectController {
         });
       }
 
-      // Check if user exists
+      // Check if the target user exists
       const user = await User.findByPk(userId);
       if (!user) {
         return res.status(404).json({
@@ -398,19 +493,12 @@ class ProjectController {
         });
       }
 
-      // Check if requester is authorized (must be project owner or manager)
-      const requesterMembership = await ProjectMember.findOne({
-        where: {
-          projectId,
-          userId: req.user?.id,
-          role: [ProjectRole.OWNER, ProjectRole.MANAGER],
-        },
-      });
-
-      if (!requesterMembership) {
+      // Check if current user can manage the project
+      const canManage = await canManageProject(currentUserId, project.id);
+      if (!canManage) {
         return res.status(403).json({
           success: false,
-          message: 'Only project owners or managers can remove project members',
+          message: 'You do not have permission to manage members in this project.',
         });
       }
 
@@ -462,4 +550,3 @@ class ProjectController {
   }
 }
 
-export default ProjectController;

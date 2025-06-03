@@ -25,9 +25,17 @@ const api: AxiosInstance = axios.create({
 // Request interceptor to add auth token to requests
 api.interceptors.request.use(
   (config) => {
+    // Skip adding auth header for login/register endpoints
+    const publicEndpoints = ['/auth/login', '/auth/register'];
+    if (publicEndpoints.some(endpoint => config.url?.includes(endpoint))) {
+      return config;
+    }
+    
     const token = localStorage.getItem('token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
+    } else {
+      console.warn('No authentication token found');
     }
     return config;
   },
@@ -39,12 +47,40 @@ api.interceptors.request.use(
 // Response interceptor to handle errors
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      // Handle unauthorized access
+  async (error) => {
+    const originalRequest = error.config;
+    
+    // If error is 401 and we haven't tried to refresh the token yet
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true;
+      
+      try {
+        // Try to refresh the token
+        const refreshToken = localStorage.getItem('refreshToken');
+        if (refreshToken) {
+          const response = await axios.post(
+            `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api'}/auth/refresh-token`,
+            { refreshToken }
+          );
+          
+          if (response.data.accessToken) {
+            localStorage.setItem('token', response.data.accessToken);
+            // Update the Authorization header
+            originalRequest.headers.Authorization = `Bearer ${response.data.accessToken}`;
+            // Retry the original request
+            return api(originalRequest);
+          }
+        }
+      } catch (refreshError) {
+        console.error('Error refreshing token:', refreshError);
+      }
+      
+      // If we get here, token refresh failed or no refresh token
       localStorage.removeItem('token');
+      localStorage.removeItem('refreshToken');
       localStorage.removeItem('user');
       window.location.href = '/login';
+      return Promise.reject(error);
     }
     
     // Enhance error message with server response if available

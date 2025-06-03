@@ -3,7 +3,7 @@ import Joi from 'joi';
 import { ProjectStatus } from '../models/project.model.js';
 import { ProjectRole } from '../models/project-member.model.js';
 import { auth } from '../middleware/auth.middleware.js';
-import ProjectController from '../controllers/project.controller.js';
+import { ProjectController } from '../controllers/project.controller.js';
 import { Project } from '../models/project.model.js';
 
 // Joi validation schemas
@@ -45,10 +45,9 @@ const updateProjectSchema = Joi.object({
     })
 }).min(1).label('Project Update Data');
 
-const projectMemberSchema = Joi.object({
-  userId: Joi.number().integer().positive().required().label('User ID'),
+const projectMemberRoleSchema = Joi.object({
   role: Joi.string().valid(...Object.values(ProjectRole)).default(ProjectRole.VIEWER).label('Role')
-}).required().label('Project Member Data');
+}).required().label('Project Member Role');
 
 // Validation middleware
 const validateRequest = (schema: Joi.ObjectSchema) => {
@@ -148,10 +147,19 @@ router.delete(
   }
 );
 
-// Add member to project
+// Add or update project member
 router.post(
-  '/:projectId/members',
-  validateRequest(projectMemberSchema),
+  '/:projectId/members/:userId',
+  validateRequest(projectMemberRoleSchema),
+  (req: Request, res: Response, next: NextFunction) => {
+    ProjectController.updateProjectMember(req, res).catch(next);
+  }
+);
+
+// Update project member role
+router.put(
+  '/:projectId/members/:userId',
+  validateRequest(projectMemberRoleSchema),
   (req: Request, res: Response, next: NextFunction) => {
     ProjectController.updateProjectMember(req, res).catch(next);
   }
