@@ -431,16 +431,18 @@ export const UserController = {
         ]
       });
 
-      // Transform the data to include only project information with role
-      const projects = projectMemberships.map(membership => ({
-        id: membership.project.id,
-        name: membership.project.name,
-        description: membership.project.description,
-        status: membership.project.status,
-        startDate: membership.project.startDate,
-        endDate: membership.project.endDate,
-        role: membership.role
-      }));
+      // Filter out any memberships with null projects and transform the data
+      const projects = projectMemberships
+        .filter(membership => membership.project !== null) // Filter out null projects
+        .map(membership => ({
+          id: membership.project!.id,
+          name: membership.project!.name,
+          description: membership.project!.description,
+          status: membership.project!.status,
+          startDate: membership.project!.startDate,
+          endDate: membership.project!.endDate,
+          role: membership.role
+        }));
 
       return res.status(200).json({
         success: true,

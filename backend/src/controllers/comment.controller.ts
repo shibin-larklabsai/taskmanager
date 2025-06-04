@@ -128,6 +128,78 @@ export class CommentController {
     }
   };
 
+  // Update a comment
+  static updateComment = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { commentId } = req.params;
+      const { content } = req.body;
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+        });
+      }
+
+      if (!content || typeof content !== 'string' || content.trim().length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Comment content is required',
+        });
+      }
+
+      const comment = await Comment.findByPk(commentId);
+
+      if (!comment) {
+        return res.status(404).json({
+          success: false,
+          message: 'Comment not found',
+        });
+      }
+
+      // Check if user is the comment author
+      if (comment.userId !== userId) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only edit your own comments',
+        });
+      }
+
+      // Update the comment
+      comment.content = content.trim();
+      await comment.save();
+
+      // Fetch the updated comment with user details
+      const updatedComment = await Comment.findByPk(comment.id, {
+        include: [
+          {
+            model: Comment.associations.user.target,
+            as: 'user',
+            attributes: ['id', 'name', 'email'],
+          },
+        ],
+      });
+
+      // Emit WebSocket event for real-time updates
+      if (req.app.get('io')) {
+        req.app.get('io').emit('comment:updated', updatedComment);
+      }
+
+      return res.status(200).json({
+        success: true,
+        data: updatedComment,
+      });
+    } catch (error: any) {
+      console.error('Error updating comment:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to update comment',
+        error: error.message,
+      });
+    }
+  };
+
   // Delete a comment
   static deleteComment = async (req: Request, res: Response): Promise<Response> => {
     try {

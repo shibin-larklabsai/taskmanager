@@ -250,11 +250,10 @@ export function TeamAssignment() {
             <TableHeader>
               <TableRow>
                 <TableHead className="w-12">#</TableHead>
-                <TableHead>Project</TableHead>
-                <TableHead>Developer</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead className="min-w-[200px]">Project</TableHead>
+                <TableHead className="min-w-[150px]">Developer</TableHead>
+                <TableHead className="min-w-[200px]">Email</TableHead>
+                <TableHead className="w-32 text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -267,17 +266,19 @@ export function TeamAssignment() {
                 if (assignedProjects.length === 0) {
                   return (
                     <TableRow>
-                      <TableCell colSpan={3} className="text-center py-4 text-muted-foreground">
+                      <TableCell colSpan={4} className="text-center py-4 text-muted-foreground">
                         No assignments found
                       </TableCell>
                     </TableRow>
                   );
                 }
 
-                // Flatten the array to show one row per project-member pair, excluding owners
+                // Flatten the array to show one row per project-member pair, excluding OWNER and TESTER roles
                 const allMembers = assignedProjects.flatMap((project: Project) => 
                   (project.projectMembers || [])
-                    .filter((member: ProjectMember) => member.role !== 'OWNER')
+                    .filter((member: ProjectMember) => 
+                      member.role !== 'OWNER' && member.role !== 'TESTER'
+                    )
                     .map((member: ProjectMember) => ({
                       project,
                       member
@@ -297,11 +298,10 @@ export function TeamAssignment() {
 
                 return allMembers.map(({ project, member }, index) => (
                   <TableRow key={`${project.id}-${member.userId}`}>
-                    <TableCell className="font-medium">{index + 1}</TableCell>
-                    <TableCell>{project.name}</TableCell>
-                    <TableCell>{member.user?.name || 'Unknown User'}</TableCell>
-                    <TableCell>{member.user?.email || 'N/A'}</TableCell>
-                    <TableCell>{member.role}</TableCell>
+                    <TableCell className="font-medium w-12">{index + 1}</TableCell>
+                    <TableCell className="min-w-[200px]">{project.name}</TableCell>
+                    <TableCell className="min-w-[150px]">{member.user?.name || 'Unknown User'}</TableCell>
+                    <TableCell className="min-w-[200px] text-ellipsis overflow-hidden">{member.user?.email || 'N/A'}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
                         <Button 

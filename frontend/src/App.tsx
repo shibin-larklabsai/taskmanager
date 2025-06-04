@@ -21,6 +21,9 @@ import { TaskDetailPage } from '@/pages/project-manager/TaskDetailPage';
 import { CreateTaskPage } from '@/pages/project-manager/CreateTaskPage';
 import { EditTaskPage } from '@/pages/project-manager/EditTaskPage';
 import { developerRoutes } from '@/routes/developerRoutes';
+import { testerRoutes } from '@/routes/testerRoutes';
+import { userRoutes } from '@/routes/userRoutes';
+
 
 // Layout wrapper
 const LayoutWrapper = ({ children }: { children: React.ReactNode }) => (
@@ -104,12 +107,26 @@ const RoleBasedRedirect = () => {
         (typeof role === 'object' && role.name === 'developer')
       );
 
+      const isTester = user.roles?.some(role =>
+        (typeof role === 'string' && role === 'tester') ||
+        (typeof role === 'object' && role.name === 'tester')
+      );
+
+      const isUser = user.roles?.some(role =>
+        (typeof role === 'string' && role === 'user') ||
+        (typeof role === 'object' && role.name === 'user')
+      );
+
       if (isAdmin) {
         window.location.href = '/dashboard';
       } else if (isProjectManager) {
         window.location.href = '/project-manager';
       } else if (isDeveloper) {
         window.location.href = '/developer';
+      } else if (isTester) {
+        window.location.href = '/tester';
+      } else if (isUser) {
+        window.location.href = '/user';
       } else {
         // Default redirect if no specific role matches
         window.location.href = '/';
@@ -199,6 +216,66 @@ function AppLayout() {
           }
         >
           {developerRoutes.map((route) => (
+            <Route
+              key={route.path || 'index'}
+              path={route.path}
+              element={route.element}
+            >
+              {route.children?.map((childRoute) => (
+                <Route
+                  key={childRoute.path || 'index'}
+                  index={childRoute.index}
+                  path={childRoute.path}
+                  element={childRoute.element}
+                />
+              ))}
+            </Route>
+          ))}
+        </Route>
+      </Route>
+
+      {/* Tester Routes */}
+      <Route path="/tester">
+        <Route
+          element={
+            <ProtectedRoute>
+              <LayoutWrapper>
+                <Outlet />
+              </LayoutWrapper>
+            </ProtectedRoute>
+          }
+        >
+          {testerRoutes.map((route) => (
+            <Route
+              key={route.path || 'index'}
+              path={route.path}
+              element={route.element}
+            >
+              {route.children?.map((childRoute) => (
+                <Route
+                  key={childRoute.path || 'index'}
+                  index={childRoute.index}
+                  path={childRoute.path}
+                  element={childRoute.element}
+                />
+              ))}
+            </Route>
+          ))}
+        </Route>
+      </Route>
+
+      {/* User Routes */}
+      <Route path="/user">
+        <Route
+          element={
+            <ProtectedRoute>
+              <LayoutWrapper>
+                <Outlet />
+              </LayoutWrapper>
+            </ProtectedRoute>
+          }
+        >
+          {userRoutes.map((route) => (
             <Route
               key={route.path || 'index'}
               path={route.path}

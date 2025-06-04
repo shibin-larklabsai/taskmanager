@@ -9,7 +9,8 @@ export function MainNav() {
   const [userRoles, setUserRoles] = useState({
     isAdmin: false,
     isProjectManager: false,
-    isDeveloper: false
+    isDeveloper: false,
+    isTester: false
   });
   const navigate = useNavigate();
 
@@ -24,6 +25,9 @@ export function MainNav() {
         ),
         isDeveloper: user.roles.some((role: string | { name: string }) => 
           typeof role === 'string' ? role === 'developer' : role.name === 'developer'
+        ),
+        isTester: user.roles.some((role: string | { name: string }) => 
+          typeof role === 'string' ? role === 'tester' : role.name === 'tester'
         )
       });
     }
@@ -40,25 +44,28 @@ export function MainNav() {
     <header className="border-b">
       <div className="container mx-auto px-4 py-3 flex justify-between items-center">
         <div className="flex items-center space-x-6">
-          <Link to="/dashboard" className="text-lg font-semibold">
+          <span className="text-lg font-semibold cursor-default">
             Task Manager
-          </Link>
+          </span>
           <nav className="hidden md:flex items-center space-x-4">
-            <NavLink
-              to={userRoles.isDeveloper ? "/developer" : "/dashboard"}
-              className={({ isActive }) => 
-                `text-sm font-medium ${isActive ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'} transition-colors`
-              }
-              onClick={(e) => {
-                // Prevent navigation if already on the target page
-                const targetPath = userRoles.isDeveloper ? '/developer' : '/dashboard';
-                if (window.location.pathname === targetPath) {
-                  e.preventDefault();
+            {(userRoles.isAdmin || userRoles.isProjectManager || userRoles.isDeveloper || userRoles.isTester) && (
+              <NavLink
+                to={userRoles.isTester ? "/tester" : (userRoles.isDeveloper ? "/developer" : "/dashboard")}
+                className={({ isActive }) => 
+                  `text-sm font-medium ${isActive ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'} transition-colors`
                 }
-              }}
-            >
-              Dashboard
-            </NavLink>
+                onClick={(e) => {
+                  // Prevent navigation if already on the target page
+                  const targetPath = userRoles.isTester ? '/tester' : 
+                                    (userRoles.isDeveloper ? '/developer' : '/dashboard');
+                  if (window.location.pathname === targetPath) {
+                    e.preventDefault();
+                  }
+                }}
+              >
+                Dashboard
+              </NavLink>
+            )}
             {userRoles.isAdmin && (
               <Link
                 to="/admin"

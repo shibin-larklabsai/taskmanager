@@ -27,3 +27,8 @@ export const getProjectComments = async (projectId: number): Promise<Comment[]> 
 export const deleteComment = async (commentId: number): Promise<void> => {
   await api.delete(`/comments/${commentId}`);
 };
+
+export const updateComment = async (commentId: number, content: string): Promise<Comment> => {
+  const response = await api.put(`/comments/${commentId}`, { content });
+  return response.data.data;
+};

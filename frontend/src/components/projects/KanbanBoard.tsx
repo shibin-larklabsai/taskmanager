@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { ProjectStatus } from '@/services/project.service';
 
 // Define the project type that KanbanBoard expects
-type KanbanProject = {
+export type KanbanProject = {
   id: number;
   name: string;
   description?: string | null;

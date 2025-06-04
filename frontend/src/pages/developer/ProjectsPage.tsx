@@ -88,6 +88,7 @@ export function ProjectsPage() {
   const [commentingProject, setCommentingProject] = useState<Project | null>(null);
   const [commentText, setCommentText] = useState('');
   const [projectComments, setProjectComments] = useState<Record<number, Comment[]>>({});
+  const [statusFilter, setStatusFilter] = useState<string>('all');
   const updateProjectStatus = useUpdateProjectStatus();
   const { socket } = useSocket();
   const queryClient = useQueryClient();
@@ -376,33 +377,68 @@ export function ProjectsPage() {
     const roleMap: Record<string, string> = {
       'OWNER': 'Owner',
       'MANAGER': 'Manager',
-      'DEVELOPER': 'Developer',
       'DESIGNER': 'Designer',
       'VIEWER': 'Viewer',
+      // Return empty string for DEVELOPER role to hide the badge
+      'DEVELOPER': ''
     };
     return roleMap[role] || role;
   };
 
   return (
     <div className="container mx-auto p-4 max-w-6xl">
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">My Projects</h1>
           <p className="text-sm text-gray-500 mt-1">
             {projects?.length || 0} {(projects?.length || 0) === 1 ? 'project' : 'projects'} you have access to
           </p>
         </div>
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <Select 
+            value={statusFilter} 
+            onValueChange={setStatusFilter}
+          >
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Filter by status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Projects</SelectItem>
+              <SelectItem value="PLANNING">Planning</SelectItem>
+              <SelectItem value="IN_PROGRESS">In Progress</SelectItem>
+              <SelectItem value="COMPLETED">Completed</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
       
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {Array.isArray(projects) && projects.sort((a, b) => a.name.localeCompare(b.name)).map((project) => (
+        {Array.isArray(projects) && projects
+          .filter(project => statusFilter === 'all' || project.status === statusFilter)
+          .sort((a, b) => {
+            // Define the priority order for statuses
+            const statusOrder = { 'PLANNING': 1, 'IN_PROGRESS': 2, 'COMPLETED': 3 };
+            // Get the status priority, default to a high number if status is not in our list
+            const aStatus = statusOrder[a.status as keyof typeof statusOrder] || 99;
+            const bStatus = statusOrder[b.status as keyof typeof statusOrder] || 99;
+            
+            // If statuses are different, sort by status priority
+            if (aStatus !== bStatus) return aStatus - bStatus;
+            
+            // If statuses are the same, sort alphabetically by name
+            return a.name.localeCompare(b.name);
+          })
+          .map((project) => (
           <Card key={project.id} className="hover:shadow-md transition-shadow">
             <CardHeader>
               <div className="flex justify-between items-start">
                 <CardTitle className="text-lg">{project.name}</CardTitle>
                 <div className="flex space-x-2">
                   {getStatusBadge(project.status)}
-                  <Badge variant="outline">{getRoleBadge(project.role)}</Badge>
+                  {/* Only show role badge if it's not DEVELOPER */}
+                  {project.role && project.role !== 'DEVELOPER' && (
+                    <Badge variant="outline">{getRoleBadge(project.role)}</Badge>
+                  )}
                 </div>
               </div>
               {project.description && (
@@ -422,7 +458,7 @@ export function ProjectsPage() {
                     </span>
                   </div>
                 )}
-                {/* Status selector for developers */}
+                {/* Status selector */}
                 {project.role === 'DEVELOPER' && (
                   <div className="mt-2">
                     <Select
@@ -488,37 +524,61 @@ export function ProjectsPage() {
               </div>
             )}
             
-            {/* Display existing comments */}
-            <div className="border-t">
-              {projectComments[project.id]?.map((comment) => (
-                <div key={comment.id} className="p-4 border-b last:border-b-0">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <div className="flex items-center space-x-2">
-                        <span className="font-medium text-sm">{comment.user.name}</span>
-                        <span className="text-xs text-muted-foreground">
-                          {formatDistanceToNow(new Date(comment.createdAt), { addSuffix: true })}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-sm">{comment.content}</p>
-                    </div>
-                    {(String(user?.id) === String(comment.user.id) || 
-                    user?.roles?.some((role: UserRole) => 
-                      ['admin', 'project_manager'].includes(role?.name || '')
-                    )) ? (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6"
-                        onClick={(e) => handleDeleteComment(comment.id, e)}
-                        disabled={deleteCommentMutation.status === 'pending'}
-                      >
-                        <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
-                      </Button>
-                    ) : null}
+            {/* Comments dropdown */}
+            <div className="border-t mt-4">
+              <details className="group">
+                <summary className="flex justify-between items-center p-3 cursor-pointer hover:bg-muted/50 transition-colors">
+                  <div className="flex items-center space-x-2">
+                    <MessageSquare className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">
+                      {projectComments[project.id]?.length || 0} {projectComments[project.id]?.length === 1 ? 'Comment' : 'Comments'}
+                    </span>
                   </div>
+                  <svg
+                    className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180"
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                </summary>
+                <div className="mt-2">
+                  {projectComments[project.id]?.map((comment) => (
+                    <div key={comment.id} className="p-4 border-b last:border-b-0">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="flex items-center space-x-2">
+                            <span className="font-medium text-sm">{comment.user.name}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {formatDistanceToNow(new Date(comment.createdAt), { addSuffix: true })}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-sm">{comment.content}</p>
+                        </div>
+                        {(String(user?.id) === String(comment.user.id) || 
+                        user?.roles?.some((role: UserRole) => 
+                          ['admin', 'project_manager'].includes(role?.name || '')
+                        )) && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={(e) => handleDeleteComment(comment.id, e)}
+                            disabled={deleteCommentMutation.status === 'pending'}
+                          >
+                            <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              </details>
             </div>
           </Card>
         ))}

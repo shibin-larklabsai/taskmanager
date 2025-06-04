@@ -40,16 +40,18 @@ export function DeveloperProjectsDashboard() {
     queryKey: ['developer-kanban-projects'],
     queryFn: async () => {
       const data = await getProjects();
-      return data.map(project => ({
-        id: project.id,
-        name: project.name,
-        description: project.description,
-        status: project.status,
-        startDate: project.startDate,
-        endDate: project.endDate,
-        createdById: project.createdById,
-        creator: project.creator
-      }));
+      return data
+        .map(project => ({
+          id: project.id,
+          name: project.name,
+          description: project.description,
+          status: project.status,
+          startDate: project.startDate,
+          endDate: project.endDate,
+          createdById: project.createdById,
+          creator: project.creator
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name)); // Sort projects by name in ascending order
     }
   });
   
@@ -99,13 +101,9 @@ export function DeveloperProjectsDashboard() {
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-semibold">
-            {showMyTasks ? 'My Tasks' : 'All Projects'}
-          </h1>
+          <h1 className="text-2xl font-semibold">Projects</h1>
           <p className="text-muted-foreground">
-            {showMyTasks 
-              ? `Viewing ${myTasks.length} assigned tasks` 
-              : `Viewing ${filteredProjects.length} projects`}
+            Viewing {filteredProjects.length} projects in Kanban view
           </p>
         </div>
         
@@ -113,7 +111,7 @@ export function DeveloperProjectsDashboard() {
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
-              placeholder={showMyTasks ? "Search tasks..." : "Search projects..."}
+              placeholder="Search projects..."
               className="pl-10"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -121,55 +119,61 @@ export function DeveloperProjectsDashboard() {
           </div>
           
           <Button 
-            variant={showMyTasks ? "default" : "outline"}
+            variant="outline"
             onClick={() => setShowMyTasks(!showMyTasks)}
             className="shrink-0"
           >
-            {showMyTasks ? 'View All Projects' : 'View My Tasks'}
+            {showMyTasks ? 'Back to Projects' : 'View My Tasks'}
           </Button>
         </div>
       </div>
 
       {showMyTasks ? (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {myTasks.length > 0 ? (
-            myTasks.map((task) => (
-              <Card key={task.id} className="hover:shadow-md transition-shadow">
-                <CardHeader className="pb-2">
-                  <div className="flex justify-between items-start">
-                    <CardTitle className="text-lg">{task.title}</CardTitle>
-                    <span className="text-xs px-2 py-1 rounded-full bg-muted text-muted-foreground">
-                      {task.status}
-                    </span>
-                  </div>
-                  <CardDescription className="line-clamp-2">
-                    {task.description}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex justify-between items-center text-sm text-muted-foreground">
-                    <span>Priority: {task.priority}</span>
-                    <span>Due: {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'No due date'}</span>
-                  </div>
-                </CardContent>
-              </Card>
-            ))
-          ) : (
-            <div className="col-span-full text-center py-12 text-muted-foreground">
-              <p>No tasks assigned to you yet.</p>
-            </div>
-          )}
+        <div className="space-y-4">
+          <h2 className="text-xl font-semibold">My Tasks</h2>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {myTasks.length > 0 ? (
+              myTasks.map((task) => (
+                <Card key={task.id} className="hover:shadow-md transition-shadow">
+                  <CardHeader className="pb-2">
+                    <div className="flex justify-between items-start">
+                      <CardTitle className="text-lg">{task.title}</CardTitle>
+                      <span className="text-xs px-2 py-1 rounded-full bg-muted text-muted-foreground">
+                        {task.status}
+                      </span>
+                    </div>
+                    <CardDescription className="line-clamp-2">
+                      {task.description}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex justify-between items-center text-sm text-muted-foreground">
+                      <span>Priority: {task.priority}</span>
+                      <span>Due: {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'No due date'}</span>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))
+            ) : (
+              <div className="col-span-full text-center py-12 text-muted-foreground">
+                <p>No tasks assigned to you yet.</p>
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <div className="space-y-4">
           <KanbanBoard 
-            projects={kanbanProjects} 
+            projects={filteredProjects} 
             onProjectClick={handleProjectClick} 
           />
           
           {filteredProjects.length === 0 && (
-            <div className="text-center py-12 text-muted-foreground">
-              <p>No projects found matching your search.</p>
+            <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
+              <p className="text-lg">No projects found</p>
+              <p className="text-sm">
+                {searchQuery ? 'Try a different search term' : 'There are no projects to display'}
+              </p>
             </div>
           )}
         </div>

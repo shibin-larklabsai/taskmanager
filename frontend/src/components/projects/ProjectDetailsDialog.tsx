@@ -28,9 +28,10 @@ export function ProjectDetailsDialog({ project, onOpenChange }: ProjectDetailsDi
     const roleMap: Record<string, string> = {
       'OWNER': 'Owner',
       'MANAGER': 'Manager',
-      'DEVELOPER': 'Developer',
       'DESIGNER': 'Designer',
       'VIEWER': 'Viewer',
+      // Return empty string for DEVELOPER role to hide the badge
+      'DEVELOPER': ''
     };
     return roleMap[role] || role;
   };
@@ -43,7 +44,9 @@ export function ProjectDetailsDialog({ project, onOpenChange }: ProjectDetailsDi
             <DialogTitle className="text-2xl">{project.name}</DialogTitle>
             <div className="flex space-x-2">
               {getStatusBadge(project.status)}
-              <Badge variant="outline">{getRoleBadge(project.role)}</Badge>
+              {project.role && project.role !== 'DEVELOPER' && getRoleBadge(project.role) && (
+                <Badge variant="outline">{getRoleBadge(project.role)}</Badge>
+              )}
             </div>
           </div>
         </DialogHeader>
