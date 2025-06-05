@@ -5,7 +5,18 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
-import { assignProjectToMember, fetchProjects, updateProjectMember, removeProjectMember, type Project, type ProjectMember } from '@/services/teamService';
+import { assignProjectToMember, fetchProjects, updateProjectMember, removeProjectMember, type Project } from '@/services/teamService';
+
+// Define ProjectMember with proper typing
+interface ProjectMember {
+  id: number;
+  projectId: number;
+  userId: number;
+  role: string;
+  user?: UserWithRoles;
+  createdAt?: string;
+  updatedAt?: string;
+}
 import { get } from '@/lib/api';
 import { Pencil, Trash2 } from 'lucide-react';
 
@@ -13,8 +24,13 @@ interface User {
   id: number;
   name: string;
   email: string;
-  roles: string[];
+  role: string;
   createdAt?: string;
+}
+
+// Extended interface with optional roles for backward compatibility
+interface UserWithRoles extends User {
+  roles?: string[];
 }
 
 export function TeamAssignment() {
@@ -30,7 +46,7 @@ export function TeamAssignment() {
   });
 
   // Fetch all users (project managers can now access this endpoint)
-  const { data: allUsers = [], isLoading: isLoadingUsers } = useQuery<User[]>({
+  const { data: allUsers = [], isLoading: isLoadingUsers } = useQuery<UserWithRoles[]>({
     queryKey: ['allUsers'],
     queryFn: async (): Promise<User[]> => {
       const response = await get<{ users: User[] }>('/users');
@@ -39,14 +55,21 @@ export function TeamAssignment() {
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
-  // Filter planned projects and get all users
-  const { plannedProjects, allUsersList } = useMemo(() => {
-    const planned = allProjects.filter((project: Project) => project.status === 'PLANNING');
+  // Get all projects and filter users
+  const { allProjectsList, allUsersList } = useMemo(() => {
+    // Get all projects with their current status
+    const projectsList = allProjects.map((project: Project) => ({
+      ...project,
+      status: project.status || 'PLANNING' // Ensure status is always defined
+    }));
     
     // Filter only developers
     const usersList = allUsers
-      .filter((user: User) => user.roles?.[0]?.toLowerCase() === 'developer')
-      .map((user: User) => ({
+      .filter((user: UserWithRoles) => {
+        const userRole = user.role?.toLowerCase() || user.roles?.[0]?.toLowerCase() || '';
+        return userRole === 'developer';
+      })
+      .map((user: UserWithRoles) => ({
         id: user.id,
         name: user.name,
         email: user.email,
@@ -54,7 +77,7 @@ export function TeamAssignment() {
       }));
     
     return {
-      plannedProjects: planned,
+      allProjectsList: projectsList,
       allUsersList: usersList
     };
   }, [allProjects, allUsers]);
@@ -72,6 +95,23 @@ export function TeamAssignment() {
     });
     return grouped;
   }, [allUsersList]);
+
+  // Get status badge with appropriate styling
+  const getStatusBadge = (status: string) => {
+    const statusMap: Record<string, { label: string; className: string }> = {
+      'PLANNING': { label: 'Planned', className: 'bg-blue-100 text-blue-800' },
+      'IN_PROGRESS': { label: 'In Progress', className: 'bg-yellow-100 text-yellow-800' },
+      'COMPLETED': { label: 'Completed', className: 'bg-green-100 text-green-800' },
+      'CANCELLED': { label: 'Cancelled', className: 'bg-red-100 text-red-800' },
+    };
+
+    const statusInfo = statusMap[status] || { label: status, className: 'bg-gray-100 text-gray-800' };
+    return (
+      <span className={`text-xs font-medium px-2 py-1 rounded-full ${statusInfo.className}`}>
+        {statusInfo.label}
+      </span>
+    );
+  };
 
   // Mutation for assigning project to developer
   const assignMutation = useMutation({
@@ -121,6 +161,28 @@ export function TeamAssignment() {
       toast.error('Please select both project and developer');
       return;
     }
+
+    // Check if developer is already assigned to this project
+    const project = allProjectsList.find(p => p.id.toString() === selectedProject);
+    const isAlreadyAssigned = project?.projectMembers?.some(
+      (member) => {
+        if (member.userId.toString() !== selectedUser) return false;
+        if (member.role === 'DEVELOPER') return true;
+        
+        if (!member.user) return false;
+        
+        const userRole = (member.user.role || '').toLowerCase();
+        return userRole === 'developer';
+      }
+    ) as boolean;
+
+    if (isAlreadyAssigned) {
+      const developer = allUsersList.find(u => u.id.toString() === selectedUser);
+      const projectName = project?.name || 'the project';
+      toast.error(`Developer ${developer?.name || ''} is already assigned to ${projectName}`);
+      return;
+    }
+
     assignMutation.mutate({ projectId: selectedProject, userId: selectedUser });
   };
 
@@ -181,11 +243,13 @@ export function TeamAssignment() {
                   <SelectValue placeholder="Select a project" />
                 </SelectTrigger>
                 <SelectContent>
-                  {plannedProjects.map((project) => (
-                    <SelectItem key={project.id} value={project.id.toString()}>
-                      {project.name}
-                    </SelectItem>
-                  ))}
+                  {allProjectsList
+                    .filter((project: Project) => project.status === 'PLANNING' || project.status === 'IN_PROGRESS')
+                    .map((project: Project) => (
+                      <SelectItem key={project.id} value={project.id.toString()}>
+                        {project.name}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>
@@ -258,50 +322,96 @@ export function TeamAssignment() {
             </TableHeader>
             <TableBody>
               {(() => {
-                // Get all projects that have at least one member assigned
-                const assignedProjects = plannedProjects.filter(
-                  (project: Project) => project.projectMembers?.length > 0
+                // Get all projects that have at least one developer member assigned
+                const assignedProjects = allProjectsList.filter(
+                  (project: Project) => 
+                    project.projectMembers?.some(
+                      (member: ProjectMember) => 
+                        member.role === 'DEVELOPER' || 
+                        (member.user?.roles?.[0]?.toLowerCase() === 'developer')
+                    )
                 );
 
                 if (assignedProjects.length === 0) {
                   return (
                     <TableRow>
-                      <TableCell colSpan={4} className="text-center py-4 text-muted-foreground">
-                        No assignments found
+                      <TableCell colSpan={5} className="text-center py-4 text-muted-foreground">
+                        No developer assignments found
                       </TableCell>
                     </TableRow>
                   );
                 }
 
-                // Flatten the array to show one row per project-member pair, excluding OWNER and TESTER roles
+                // Flatten the array to show one row per project-developer pair
                 const allMembers = assignedProjects.flatMap((project: Project) => 
                   (project.projectMembers || [])
                     .filter((member: ProjectMember) => 
-                      member.role !== 'OWNER' && member.role !== 'TESTER'
+                      (member.role === 'DEVELOPER' || 
+                       member.user?.roles?.[0]?.toLowerCase() === 'developer') &&
+                      member.user // Ensure user data exists
                     )
                     .map((member: ProjectMember) => ({
                       project,
-                      member
+                      member,
+                      user: allUsers.find(u => u.id === member.userId) || member.user
                     }))
                 );
 
                 if (allMembers.length === 0) {
                   return (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-4 text-muted-foreground">
-                        No team member assignments found
+                      <TableCell colSpan={5} className="text-center py-4 text-muted-foreground">
+                        No developer assignments found
                       </TableCell>
                     </TableRow>
                   );
                 }
 
+                // Sort by project status and name
+                allMembers.sort((a, b) => {
+                  // First sort by status order
+                  const statusOrder: Record<string, number> = {
+                    'IN_PROGRESS': 1,
+                    'PLANNING': 2,
+                    'COMPLETED': 3,
+                    'CANCELLED': 4
+                  };
+                  const statusCompare = 
+                    (statusOrder[a.project.status] || 99) - (statusOrder[b.project.status] || 99);
+                  
+                  // If same status, sort by project name
+                  if (statusCompare === 0) {
+                    return a.project.name.localeCompare(b.project.name);
+                  }
+                  return statusCompare;
+                });
+
 
                 return allMembers.map(({ project, member }, index) => (
-                  <TableRow key={`${project.id}-${member.userId}`}>
+                  <TableRow key={`${project.id}-${member.userId}`} className="hover:bg-muted/50">
                     <TableCell className="font-medium w-12">{index + 1}</TableCell>
-                    <TableCell className="min-w-[200px]">{project.name}</TableCell>
-                    <TableCell className="min-w-[150px]">{member.user?.name || 'Unknown User'}</TableCell>
-                    <TableCell className="min-w-[200px] text-ellipsis overflow-hidden">{member.user?.email || 'N/A'}</TableCell>
+                    <TableCell className="min-w-[200px]">
+                      <div className="flex flex-col">
+                        <span className="font-medium">{project.name}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {project.description?.substring(0, 50)}{project.description && project.description.length > 50 ? '...' : ''}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="min-w-[150px]">
+                      <div className="flex flex-col">
+                        <span>{member.user?.name || 'Unknown User'}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {member.role}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="min-w-[200px] text-ellipsis overflow-hidden">
+                      {member.user?.email || 'N/A'}
+                    </TableCell>
+                    <TableCell>
+                      {getStatusBadge(project.status)}
+                    </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
                         <Button 

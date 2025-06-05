@@ -1,4 +1,5 @@
 import api from '@/lib/api';
+import { toast } from 'sonner';
 
 export type ProjectStatus = 'PLANNING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
 
@@ -141,28 +142,43 @@ export const getProjectById = async (id: number): Promise<Project> => {
 
 export const createProject = async (projectData: CreateProjectData): Promise<Project> => {
   try {
+    console.log('Creating project with data:', projectData);
     const response = await api.post<ApiResponse<{ project: Project }>>('/projects', projectData);
+    
     if (response.data.success && response.data.data) {
+      console.log('Project created successfully:', response.data.data.project);
+      toast.success('Project created successfully');
       return response.data.data.project;
     }
+    
     throw new Error('Failed to create project');
   } catch (error: any) {
     console.error('Error creating project:', error);
-    throw new Error(error.response?.data?.message || 'Failed to create project');
+    const errorMessage = error.response?.data?.message || 'Failed to create project';
+    toast.error(errorMessage);
+    throw new Error(errorMessage);
   }
 };
 
 export const updateProject = async (projectData: UpdateProjectData): Promise<Project> => {
   try {
     const { id, ...updateData } = projectData;
+    console.log(`Updating project ${id} with data:`, updateData);
+    
     const response = await api.put<ApiResponse<{ project: Project }>>(`/projects/${id}`, updateData);
+    
     if (response.data.success && response.data.data) {
+      console.log('Project updated successfully:', response.data.data.project);
+      toast.success('Project updated successfully');
       return response.data.data.project;
     }
+    
     throw new Error('Failed to update project');
   } catch (error: any) {
     console.error('Error updating project:', error);
-    throw new Error(error.response?.data?.message || 'Failed to update project');
+    const errorMessage = error.response?.data?.message || 'Failed to update project';
+    toast.error(errorMessage);
+    throw new Error(errorMessage);
   }
 };
 

@@ -51,8 +51,7 @@ export function ProjectsPage() {
     data: projects = [], 
     isLoading, 
     error,
-    refetch,
-    isRefetching
+    refetch
   } = useQuery<Project[]>({
     queryKey: ['admin', 'projects'],
     queryFn: getProjects,
@@ -130,14 +129,44 @@ export function ProjectsPage() {
   }, [error]);
 
   const createMutation = useMutation({
-    mutationFn: (data: ProjectFormData) => createProject(data),
-    onSuccess: () => {
+    mutationFn: async (data: ProjectFormData) => {
+      console.log('Starting create project mutation with data:', data);
+      const result = await createProject(data);
+      console.log('Create project API response:', result);
+      return result;
+    },
+    onSuccess: (data) => {
+      console.log('Project created, invalidating queries', data);
       queryClient.invalidateQueries({ queryKey: ['admin', 'projects'] });
-      toast.success('Project created successfully');
+      
+      console.log('Showing success toast for project creation');
+      // Use a different toast method to ensure it's not being overridden
+      toast.custom((t) => (
+        <div className="bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-md shadow-lg">
+          <p className="font-medium">Success!</p>
+          <p>Project created successfully</p>
+        </div>
+      ), {
+        duration: 3000,
+        position: 'top-right',
+      });
+      
+      console.log('Closing form after project creation');
       setIsFormOpen(false);
     },
     onError: (error: Error) => {
-      toast.error(`Failed to create project: ${error.message}`);
+      console.error('Create project error:', error);
+      console.log('Showing error toast for project creation');
+      // Use a different toast method to ensure it's not being overridden
+      toast.custom((t) => (
+        <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-md shadow-lg">
+          <p className="font-medium">Error</p>
+          <p>Failed to create project: {error.message}</p>
+        </div>
+      ), {
+        duration: 5000,
+        position: 'top-right',
+      });
     },
   });
 
@@ -148,22 +177,51 @@ export function ProjectsPage() {
 
   const updateProjectMutation = useMutation({
     mutationFn: async (data: { projectId: number; projectData: Parameters<typeof updateProject>[1] }) => {
+      console.log('Starting update project mutation for ID:', data.projectId, 'with data:', data.projectData);
       try {
         const result = await updateProject(data.projectId, data.projectData);
+        console.log('Update project API response:', result);
         return result;
       } catch (error) {
         console.error('Error in updateProject mutation:', error);
         throw error;
       }
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
+      console.log('Project updated, invalidating queries', data);
       queryClient.invalidateQueries({ queryKey: ['admin', 'projects'] });
-      toast.success('Project updated successfully');
+      
+      console.log('Showing success toast for project update');
+      // Use a different toast method to ensure it's not being overridden
+      toast.custom((t) => (
+        <div className="bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-md shadow-lg">
+          <p className="font-medium">Success!</p>
+          <p>Project updated successfully</p>
+        </div>
+      ), {
+        duration: 3000,
+        position: 'top-right',
+      });
+      
+      console.log('Closing form after project update');
+      setSelectedProject(null);
+      setIsFormOpen(false);
     },
     onError: (error: Error) => {
       console.error('Update project error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to update project';
-      toast.error(errorMessage, { duration: 5000 });
+      console.log('Showing error toast for project update:', errorMessage);
+      
+      // Use a different toast method to ensure it's not being overridden
+      toast.custom((t) => (
+        <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-md shadow-lg">
+          <p className="font-medium">Error</p>
+          <p>{errorMessage}</p>
+        </div>
+      ), {
+        duration: 5000,
+        position: 'top-right',
+      });
     },
   });
 
@@ -224,14 +282,15 @@ export function ProjectsPage() {
     },
   });
   
-  const handleRefresh = async () => {
-    try {
-      await refetch();
-      toast.success('Projects list refreshed');
-    } catch (err) {
-      toast.error('Failed to refresh projects');
-    }
-  };
+  // Refresh function if needed
+  // const handleRefresh = async () => {
+  //   try {
+  //     await refetch();
+  //     toast.success('Projects list refreshed');
+  //   } catch (err) {
+  //     toast.error('Failed to refresh projects');
+  //   }
+  // };
 
   const handleEditProject = (project: Project) => {
     // Create a copy of the project to avoid mutating the original
@@ -263,19 +322,31 @@ export function ProjectsPage() {
   };
 
   const handleSubmit = async (data: ProjectFormData) => {
-    if (selectedProject && 'id' in data) {
-      // For update, ensure we have the ID and merge with the form data
-      updateProjectMutation.mutate({
-        projectId: selectedProject.id,
-        projectData: {
-          ...data,
-          // Ensure we don't send the ID in the projectData
-          id: undefined
-        }
-      });
-    } else {
-      // For create, just pass the data as is
-      createMutation.mutate(data);
+    try {
+      if (selectedProject && 'id' in data) {
+        // For update
+        await updateProjectMutation.mutateAsync({
+          projectId: selectedProject.id,
+          projectData: {
+            ...data,
+            id: undefined
+          }
+        });
+      } else {
+        // For create
+        await createMutation.mutateAsync(data);
+      }
+      
+      // The mutations will handle showing success toasts
+      // and closing the form in their onSuccess handlers
+    } catch (error) {
+      // Errors are already handled in the mutation's onError
+      console.error('Form submission error:', error);
+    } finally {
+      // Ensure form is closed even if there's an error
+      // The error toast will still be visible
+      setIsFormOpen(false);
+      setSelectedProject(null);
     }
   };
 
@@ -351,6 +422,15 @@ export function ProjectsPage() {
             </p>
           </div>
           <div className="flex gap-2">
+            <Button 
+              onClick={() => {
+                setSelectedProject(null);
+                setIsFormOpen(true);
+              }}
+              className="mr-2"
+            >
+              Test Error Toast
+            </Button>
             <Button 
               onClick={() => {
                 setSelectedProject(null);

@@ -19,14 +19,23 @@ export function CreateTaskPage() {
 
   // Create task mutation
   const createTaskMutation = useMutation({
-    mutationFn: (data: CreateTaskData) => createTask(data),
+    mutationFn: (data: CreateTaskData) => {
+      console.log('Creating task with data:', data);
+      return createTask(data);
+    },
     onSuccess: (newTask) => {
-      queryClient.invalidateQueries({ queryKey: ['tasks'] });
-      toast.success('Task created successfully');
-      navigate(`/project-manager/tasks/${newTask.id}`);
+      console.log('Task created successfully, navigating to task');
+      toast.success('Task created successfully', {
+        onAutoClose: () => {
+          navigate(`/project-manager/tasks/${newTask.id}`);
+        },
+      });
     },
     onError: (error: Error) => {
-      toast.error(`Failed to create task: ${error.message}`);
+      console.error('Error creating task:', error);
+      toast.error(`Failed to create task: ${error.message}`, {
+        duration: 5000 // 5 seconds for errors
+      });
     },
   });
 

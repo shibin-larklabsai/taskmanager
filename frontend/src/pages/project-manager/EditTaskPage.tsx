@@ -29,17 +29,29 @@ export function EditTaskPage() {
   // Update task mutation
   const updateTaskMutation = useMutation({
     mutationFn: (data: Partial<Task>) => {
+      console.log('Updating task with data:', data);
       if (!taskId) throw new Error('Task ID is required');
       return updateTask(Number(taskId), data);
     },
     onSuccess: () => {
+      console.log('Task updated successfully, invalidating queries');
       queryClient.invalidateQueries({ queryKey: ['task', taskId] });
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
-      toast.success('Task updated successfully');
-      navigate(`/project-manager/tasks/${taskId}`);
+      
+      console.log('Showing success toast');
+      toast.success('Task updated successfully', {
+        duration: 3000, // 3 seconds
+        onAutoClose: () => {
+          console.log('Toast closed, navigating to task');
+          navigate(`/project-manager/tasks/${taskId}`);
+        }
+      });
     },
     onError: (error: Error) => {
-      toast.error(`Failed to update task: ${error.message}`);
+      console.error('Error updating task:', error);
+      toast.error(`Failed to update task: ${error.message}`, {
+        duration: 5000 // 5 seconds for errors
+      });
     },
   });
 

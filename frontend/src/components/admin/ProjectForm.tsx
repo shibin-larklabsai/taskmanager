@@ -84,10 +84,15 @@ setFormData({
         (dataToSubmit as UpdateProjectData).id = initialData.id;
       }
       
+      // Wait for the submission to complete
       await onSubmit(dataToSubmit);
-      onOpenChange(false);
+      
+      // Don't close the form here - let the parent component handle it after showing the toast
+      // The parent's onSuccess handler will call onOpenChange(false) after the toast is shown
     } catch (error) {
       console.error('Error submitting form:', error);
+      // Re-throw the error to be handled by the parent component
+      throw error;
     }
   };
 

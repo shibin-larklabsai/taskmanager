@@ -162,7 +162,7 @@ export function UsersPage() {
     mutationFn: createUser,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
-      toast.success('User created successfully');
+      toast.success('User created successfully!');
       setIsFormOpen(false);
     },
     onError: (error: any) => {
@@ -175,7 +175,7 @@ export function UsersPage() {
     mutationFn: (data: { id: number; userData: any }) => updateUser(data.id, data.userData),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
-      toast.success('User updated successfully');
+      toast.success('User updated successfully!');
       setIsFormOpen(false);
     },
     onError: (error: any) => {
@@ -188,7 +188,7 @@ export function UsersPage() {
     mutationFn: (id: number) => deleteUser(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
-      toast.success('User deleted successfully');
+      toast.success('User deleted successfully!');
       setUserToDelete(null);
     },
     onError: (error: any) => {

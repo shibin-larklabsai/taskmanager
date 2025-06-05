@@ -1,6 +1,6 @@
 import { Route, Routes, Navigate, Outlet } from 'react-router-dom';
 import { useEffect } from 'react';
-import { Toaster } from '@/components/ui/toaster';
+import { Toaster } from 'sonner';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { SocketProvider } from '@/contexts/SocketContext';
 import { LoginPage } from '@/pages/LoginPage';
@@ -29,7 +29,6 @@ import { userRoutes } from '@/routes/userRoutes';
 const LayoutWrapper = ({ children }: { children: React.ReactNode }) => (
   <MainLayout>
     {children}
-    <Toaster />
   </MainLayout>
 );
 
@@ -303,11 +302,14 @@ function AppLayout() {
 // App Entry Point
 function App() {
   return (
-    <AuthProvider>
-      <SocketProvider>
-        <AppLayout />
-      </SocketProvider>
-    </AuthProvider>
+    <>
+      <Toaster position="top-right" richColors />
+      <AuthProvider>
+        <SocketProvider>
+          <AppLayout />
+        </SocketProvider>
+      </AuthProvider>
+    </>
   );
 }
 
