@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient, UseMutationResult } from '@tanstack/react-query';
 import { Loader2, AlertCircle, Calendar, Folder, MessageSquare, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSocket } from '@/contexts/SocketContext';
@@ -264,8 +265,45 @@ export function ProjectsPage() {
     }
   });
 
-  const deleteCommentMutation = useMutation({
+  const deleteCommentMutation = useMutation<unknown, Error, number, { projectId: number; commentId: number; previousComments: Comment[] } | null>({
     mutationFn: (commentId: number) => deleteComment(commentId),
+    onMutate: async (commentId) => {
+      // Find which project this comment belongs to
+      const projectId = Object.keys(projectComments).find(projectId => 
+        projectComments[parseInt(projectId)].some(comment => comment.id === commentId)
+      );
+      
+      if (!projectId) return null;
+      
+      // Save the current comments for potential rollback
+      const previousComments = projectComments[parseInt(projectId)];
+      
+      // Optimistically remove the comment
+      setProjectComments(prev => ({
+        ...prev,
+        [projectId]: prev[parseInt(projectId)].filter(comment => comment.id !== commentId)
+      }));
+      
+      // Return the context with the previous comments for rollback
+      return { projectId: parseInt(projectId), commentId, previousComments };
+    },
+    onError: (_error: Error, _commentId: number, context) => {
+      if (!context) return;
+      
+      // Revert back to the previous comments on error
+      setProjectComments(prev => ({
+        ...prev,
+        [context.projectId]: context.previousComments
+      }));
+      
+      console.error('Failed to delete comment:', _error);
+      toast.error('Failed to delete comment');
+    },
+    onSettled: () => {
+      // Invalidate and refetch comments to ensure UI is in sync with server
+      // This will run after either success or error
+      queryClient.invalidateQueries({ queryKey: ['project-comments'] });
+    }
   });
 
   const handleCommentSubmit = async (e: React.FormEvent, projectId: number) => {

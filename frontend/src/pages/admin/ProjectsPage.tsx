@@ -352,13 +352,6 @@ export function ProjectsPage() {
           </div>
           <div className="flex gap-2">
             <Button 
-              variant="outline" 
-              onClick={handleRefresh}
-              disabled={isLoading || isRefetching}
-            >
-              {isRefetching ? 'Refreshing...' : 'Refresh'}
-            </Button>
-            <Button 
               onClick={() => {
                 setSelectedProject(null);
                 setIsFormOpen(true);
