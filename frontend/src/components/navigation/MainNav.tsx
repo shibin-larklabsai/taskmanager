@@ -1,7 +1,6 @@
 import { Link, useNavigate, NavLink } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
-
 import { useEffect, useState } from 'react';
 
 export function MainNav() {
@@ -82,7 +81,6 @@ export function MainNav() {
                 Project Manager
               </Link>
             )}
-
           </nav>
         </div>
         <div className="flex items-center space-x-4">

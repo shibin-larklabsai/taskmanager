@@ -225,6 +225,32 @@ export class ProjectController {
   static getProjectById = async (req: Request, res: Response): Promise<Response | void> => {
     try {
       const { projectId } = req.params;
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated',
+        });
+      }
+
+      // Get user's roles
+      const user = await User.findByPk(userId, {
+        include: [{
+          model: User.associations.roles.target,
+          as: 'roles',
+          attributes: ['id', 'name'],
+          through: { attributes: [] },
+          required: false
+        }]
+      });
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found',
+        });
+      }
 
       const project = await Project.findByPk(projectId, {
         include: [
@@ -243,6 +269,35 @@ export class ProjectController {
         return res.status(404).json({
           success: false,
           message: 'Project not found',
+        });
+      }
+
+      // Check if user is admin
+      const isAdmin = user.roles?.some(role => role.name === 'admin');
+      if (isAdmin) {
+        return res.status(200).json({
+          success: true,
+          data: project,
+        });
+      }
+
+      // Check if user is a project member
+      const isMember = await ProjectMember.findOne({
+        where: { projectId, userId }
+      });
+
+      if (isMember) {
+        return res.status(200).json({
+          success: true,
+          data: project,
+        });
+      }
+
+      // For non-members, only allow access to in-progress projects
+      if (project.status !== 'IN_PROGRESS') {
+        return res.status(403).json({
+          success: false,
+          message: 'You do not have permission to view this project',
         });
       }
 

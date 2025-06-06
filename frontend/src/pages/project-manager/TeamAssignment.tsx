@@ -244,10 +244,12 @@ export function TeamAssignment() {
                 </SelectTrigger>
                 <SelectContent>
                   {allProjectsList
-                    .filter((project: Project) => project.status === 'PLANNING' || project.status === 'IN_PROGRESS')
+                    .filter((project: Project) => project.status === 'PLANNING')
                     .map((project: Project) => (
                       <SelectItem key={project.id} value={project.id.toString()}>
-                        {project.name}
+                        <div className="flex items-center gap-2">
+                          <span>{project.name}</span>
+                        </div>
                       </SelectItem>
                     ))}
                 </SelectContent>
@@ -258,26 +260,24 @@ export function TeamAssignment() {
               <label className="text-sm font-medium">Select Team Member</label>
               <Select value={selectedUser} onValueChange={setSelectedUser}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select a team member" />
+                  <SelectValue placeholder="Select a developer" />
                 </SelectTrigger>
                 <SelectContent>
-                  {Object.entries(usersByRole).map(([role, users]) => (
-                    <div key={role}>
-                      <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
-                        {role.charAt(0).toUpperCase() + role.slice(1).toLowerCase()}
-                      </div>
-                      {users.map((user) => (
-                        <SelectItem key={user.id} value={user.id.toString()}>
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium">{user.name}</span>
-                            <span className="text-muted-foreground text-xs">
-                              {user.email}
-                            </span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </div>
-                  ))}
+                  {allUsersList
+                    .filter(user => {
+                      const userRole = user.role?.toLowerCase();
+                      return userRole === 'developer' || userRole === 'DEVELOPER';
+                    })
+                    .map((user) => (
+                      <SelectItem key={user.id} value={user.id.toString()}>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{user.name}</span>
+                          <span className="text-muted-foreground text-xs">
+                            {user.email}
+                          </span>
+                        </div>
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>
@@ -322,15 +322,61 @@ export function TeamAssignment() {
             </TableHeader>
             <TableBody>
               {(() => {
+                console.log('All projects:', allProjectsList); // Debug log
+                
                 // Get all projects that have at least one developer member assigned
+                // Helper function to check if a member is a developer
+                const isDeveloper = (member: ProjectMember): boolean => {
+                  // Check member role (case insensitive)
+                  const memberRole = member.role?.toUpperCase();
+                  if (memberRole === 'DEVELOPER') {
+                    return true;
+                  }
+                  
+                  // Check user role (case insensitive)
+                  const userRole = member.user?.role?.toLowerCase();
+                  if (userRole === 'developer') {
+                    return true;
+                  }
+                  
+                  // Check user roles array (case insensitive)
+                  const userRoles = member.user?.roles || [];
+                  if (Array.isArray(userRoles)) {
+                    return userRoles.some(r => {
+                      const role = r && typeof r === 'string' ? r.toLowerCase() : '';
+                      return role === 'developer';
+                    });
+                  }
+                  
+                  return false;
+                };
+                
                 const assignedProjects = allProjectsList.filter(
-                  (project: Project) => 
-                    project.projectMembers?.some(
-                      (member: ProjectMember) => 
-                        member.role === 'DEVELOPER' || 
-                        (member.user?.roles?.[0]?.toLowerCase() === 'developer')
-                    )
+                  (project: Project) => {
+                    if (!project.projectMembers?.length) return false;
+                    
+                    const hasDeveloper = project.projectMembers.some(member => {
+                      const isDev = isDeveloper(member);
+                      
+                      console.log(`Project ${project.name} (${project.id}) member ${member.userId} (${member.user?.name}):`, { 
+                        isDeveloper: isDev,
+                        memberRole: member.role,
+                        userRole: member.user?.role,
+                        userRoles: member.user?.roles,
+                        hasUser: !!member.user
+                      });
+                      
+                      return isDev && member.user;
+                    });
+                    
+                    console.log(`Project ${project.name} (${project.id}) has developers:`, hasDeveloper);
+                    return hasDeveloper;
+                  }
                 );
+                
+                console.log('All projects with developers:', assignedProjects.map(p => `${p.name} (${p.id})`));
+                
+                console.log('Assigned projects after filter:', assignedProjects); // Debug log
 
                 if (assignedProjects.length === 0) {
                   return (
@@ -343,19 +389,37 @@ export function TeamAssignment() {
                 }
 
                 // Flatten the array to show one row per project-developer pair
-                const allMembers = assignedProjects.flatMap((project: Project) => 
-                  (project.projectMembers || [])
-                    .filter((member: ProjectMember) => 
-                      (member.role === 'DEVELOPER' || 
-                       member.user?.roles?.[0]?.toLowerCase() === 'developer') &&
-                      member.user // Ensure user data exists
-                    )
-                    .map((member: ProjectMember) => ({
+                const allMembers = assignedProjects.flatMap((project: Project) => {
+                  console.log(`Processing project: ${project.name} (${project.id})`);
+                  
+                  const developerMembers = (project.projectMembers || []).filter((member: ProjectMember) => {
+                    const isDev = isDeveloper(member);
+                    
+                    console.log(`  Member ${member.userId} (${member.user?.name}):`, { 
+                      isDeveloper: isDev,
+                      memberRole: member.role,
+                      userRole: member.user?.role,
+                      userRoles: member.user?.roles,
+                      hasUser: !!member.user
+                    });
+                    
+                    return isDev && member.user;
+                  });
+                  
+                  console.log(`  Found ${developerMembers.length} developer(s) for project ${project.name}`);
+                  
+                  return developerMembers.map((member: ProjectMember) => {
+                    const user = allUsers.find(u => u.id === member.userId) || member.user;
+                    console.log(`  Mapping member ${member.userId} (${user?.name})`); // Debug log
+                    return {
                       project,
                       member,
-                      user: allUsers.find(u => u.id === member.userId) || member.user
-                    }))
-                );
+                      user
+                    };
+                  });
+                });
+                
+                console.log('All members after processing:', allMembers); // Debug log
 
                 if (allMembers.length === 0) {
                   return (
@@ -367,23 +431,25 @@ export function TeamAssignment() {
                   );
                 }
 
-                // Sort by project status and name
+                // Sort by project status (IN_PROGRESS first, then PLANNING, then others) and then by project name
                 allMembers.sort((a, b) => {
-                  // First sort by status order
                   const statusOrder: Record<string, number> = {
                     'IN_PROGRESS': 1,
                     'PLANNING': 2,
                     'COMPLETED': 3,
                     'CANCELLED': 4
                   };
+                  
+                  const aStatus = a.project.status || 'PLANNING';
+                  const bStatus = b.project.status || 'PLANNING';
+                  
                   const statusCompare = 
-                    (statusOrder[a.project.status] || 99) - (statusOrder[b.project.status] || 99);
+                    (statusOrder[aStatus] || 99) - (statusOrder[bStatus] || 99);
                   
                   // If same status, sort by project name
-                  if (statusCompare === 0) {
-                    return a.project.name.localeCompare(b.project.name);
-                  }
-                  return statusCompare;
+                  return statusCompare === 0 
+                    ? a.project.name.localeCompare(b.project.name)
+                    : statusCompare;
                 });
 
 

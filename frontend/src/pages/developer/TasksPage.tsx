@@ -1,20 +1,38 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getTasks, updateTask, type Task } from '@/services/task.service';
-import { Loader2, AlertCircle, Users, Calendar, Flag } from 'lucide-react';
+import { getTasks, updateTask, type Task, type TaskFilters } from '@/services/task.service';
+import { Loader2, AlertCircle, Calendar } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useState } from 'react';
 import { TaskDetail } from '@/components/tasks/TaskDetail';
 import { format } from 'date-fns';
 import api from '@/services/api';
 import { AxiosError } from 'axios';
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+
+type TaskWithProject = Task & {
+  project?: {
+    name: string;
+  };
+};
 
 export function DeveloperTasksPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  
+  // Pagination state - show 6 projects per page
+  const [pagination, setPagination] = useState({
+    page: 1,
+    pageSize: 6,
+    total: 0
+  });
+  
+  // Status filter
+  const [statusFilter, setStatusFilter] = useState<string>('all');
 
   // Update task status mutation
   const updateStatusMutation = useMutation({
@@ -66,48 +84,50 @@ export function DeveloperTasksPage() {
     refetchOnWindowFocus: false,
   });
   
-  // Fetch tasks for the current user with filters
+  // Fetch tasks for the current user with filters and pagination
   const { 
-    data: tasks = [], 
+    data: tasksData = { tasks: [], total: 0 }, 
     isLoading: isLoadingTasks, 
     error: tasksError, 
     refetch: refetchTasks 
-  } = useQuery<Task[]>({
-    queryKey: ['developer-tasks', user?.id, userProjects],
+  } = useQuery<{ tasks: TaskWithProject[], total: number }>({
+    queryKey: ['developer-tasks', user?.id, userProjects, pagination.page, pagination.pageSize, statusFilter],
     queryFn: async () => {
-      if (!user?.id || !userProjects.length) return [];
+      if (!user?.id || !userProjects.length) return { tasks: [], total: 0 };
       
       try {
-        console.log('Fetching tasks for user ID:', user.id);
-        
         // Convert project IDs to numbers and filter out any invalid ones
-        const projectIds: number[] = [];
-        
-        for (const project of userProjects) {
-          const id = typeof project.id === 'string' 
-            ? parseInt(project.id, 10) 
-            : Number(project.id);
-            
-          if (!isNaN(id)) {
-            projectIds.push(id);
-          }
-        }
-        
-        console.log('User project IDs:', projectIds);
+        const projectIds = userProjects
+          .map(project => typeof project.id === 'string' ? parseInt(project.id, 10) : Number(project.id))
+          .filter(id => !isNaN(id));
         
         if (projectIds.length === 0) {
-          console.log('No valid project IDs found');
-          return [];
+          return { tasks: [], total: 0 };
         }
 
-        // Use the new getTasks with filters
-        const tasks = await getTasks({
+        // Build filters
+        const filters: TaskFilters = {
           projectIds,
-          assignedToId: user.id
-        });
+          assignedToId: user.id,
+          page: pagination.page,
+          pageSize: pagination.pageSize,
+        };
+
+        // Add status filter if not 'all'
+        if (statusFilter !== 'all') {
+          filters.status = statusFilter as Task['status'];
+        }
+
+        // Use the getTasks with filters and pagination
+        const { tasks, total } = await getTasks(filters);
         
-        console.log('Filtered tasks from API:', tasks);
-        return tasks;
+        // Update total count
+        setPagination(prev => ({
+          ...prev,
+          total
+        }));
+        
+        return { tasks, total };
       } catch (err) {
         console.error('Error fetching tasks:', err);
         throw new Error('Failed to load tasks');
@@ -117,6 +137,36 @@ export function DeveloperTasksPage() {
     retry: 1,
     refetchOnWindowFocus: true,
   });
+  
+  const tasks = tasksData.tasks || [];
+  const totalPages = Math.ceil(tasksData.total / pagination.pageSize);
+  
+  // Handle page change
+  const handlePageChange = (page: number) => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setPagination(prev => ({
+      ...prev,
+      page
+    }));
+  };
+  
+  // Handle page size change
+  const handlePageSizeChange = (value: string) => {
+    setPagination(prev => ({
+      ...prev,
+      pageSize: Number(value),
+      page: 1 // Reset to first page
+    }));
+  };
+  
+  // Handle status filter change
+  const handleStatusFilterChange = (value: string) => {
+    setStatusFilter(value);
+    setPagination(prev => ({
+      ...prev,
+      page: 1 // Reset to first page when filter changes
+    }));
+  };
 
   if (isLoadingProjects || isLoadingTasks) {
     return (
@@ -177,19 +227,55 @@ export function DeveloperTasksPage() {
 
   return (
     <div className="container mx-auto p-4 max-w-6xl">
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">My Tasks</h1>
           <p className="text-sm text-gray-500 mt-1">
             Viewing tasks assigned to you across all projects
           </p>
         </div>
+        
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600 whitespace-nowrap">Status:</span>
+            <Select value={statusFilter} onValueChange={handleStatusFilterChange}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Filter by status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Statuses</SelectItem>
+                <SelectItem value="TODO">To Do</SelectItem>
+                <SelectItem value="IN_PROGRESS">In Progress</SelectItem>
+                <SelectItem value="IN_REVIEW">In Review</SelectItem>
+                <SelectItem value="DONE">Done</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600 whitespace-nowrap">Show:</span>
+            <Select 
+              value={pagination.pageSize.toString()} 
+              onValueChange={handlePageSizeChange}
+            >
+              <SelectTrigger className="w-[100px]">
+                <SelectValue placeholder="Items per page" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="6">6</SelectItem>
+                <SelectItem value="12">12</SelectItem>
+                <SelectItem value="24">24</SelectItem>
+                <SelectItem value="48">48</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
       </div>
       
       {/* Task List */}
       <div className="bg-white rounded-lg shadow overflow-hidden">
         {/* Task List Header */}
-        <div className="grid grid-cols-12 gap-4 px-6 py-3 bg-gray-50 border-b border-gray-200 text-sm font-medium text-gray-600">
+        <div className="hidden md:grid grid-cols-12 gap-4 px-6 py-3 bg-gray-50 border-b border-gray-200 text-sm font-medium text-gray-600">
           <div className="col-span-5">Task</div>
           <div className="col-span-2">Project</div>
           <div className="col-span-1 text-center">Priority</div>
@@ -199,6 +285,134 @@ export function DeveloperTasksPage() {
         </div>
         
         {/* Task Items */}
+        {tasks.length === 0 && !isLoadingTasks && (
+          <div className="p-6 text-center text-gray-500">
+            No tasks found matching your criteria
+          </div>
+        )}
+        
+        {tasks.length > 0 && (
+          <div className="divide-y divide-gray-100">
+            {tasks.map((task) => (
+              <div 
+                key={task.id} 
+                className="hover:bg-gray-50 transition-colors cursor-pointer"
+                onClick={() => handleTaskClick(task)}
+              >
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 p-4 md:p-0">
+                  <div className="md:col-span-5 px-6 py-4">
+                    <div className="font-medium text-gray-900">{task.title}</div>
+                    <div className="text-sm text-gray-500 line-clamp-1">{task.description}</div>
+                  </div>
+                  <div className="md:col-span-2 px-6 py-4 flex items-center">
+                    <div className="text-sm text-gray-900">{task.project?.name || 'N/A'}</div>
+                  </div>
+                  <div className="md:col-span-1 px-6 py-4 flex items-center justify-center">
+                    <Badge 
+                      variant={task.priority === 'HIGH' ? 'destructive' : task.priority === 'MEDIUM' ? 'secondary' : 'default'}
+                      className="capitalize"
+                    >
+                      {task.priority?.toLowerCase() || 'N/A'}
+                    </Badge>
+                  </div>
+                  <div className="md:col-span-1 px-6 py-4 flex items-center justify-center">
+                    <Badge 
+                      variant={
+                        task.status === 'DONE' ? 'default' : 
+                        task.status === 'IN_PROGRESS' ? 'secondary' : 
+                        task.status === 'IN_REVIEW' ? 'default' : 'default'
+                      }
+                      className={`capitalize ${
+                        task.status === 'DONE' ? 'bg-green-100 text-green-800' :
+                        task.status === 'IN_PROGRESS' ? 'bg-blue-100 text-blue-800' :
+                        task.status === 'IN_REVIEW' ? 'bg-yellow-100 text-yellow-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}
+                    >
+                      {task.status?.toLowerCase().replace('_', ' ') || 'N/A'}
+                    </Badge>
+                  </div>
+                  <div className="md:col-span-2 px-6 py-4 flex items-center">
+                    <div className="flex items-center text-sm text-gray-500">
+                      <Calendar className="h-4 w-4 mr-1" />
+                      {task.dueDate ? format(new Date(task.dueDate), 'MMM d, yyyy') : 'No due date'}
+                    </div>
+                  </div>
+                  <div className="md:col-span-1 px-6 py-4 flex items-center justify-end">
+                    <Button variant="ghost" size="sm">
+                      View
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="px-6 py-4 border-t border-gray-200">
+            <Pagination>
+              <PaginationContent>
+                <PaginationItem>
+                  <PaginationPrevious 
+                    href="#" 
+                    onClick={(e) => {
+                      e.preventDefault();
+                      if (pagination.page > 1) handlePageChange(pagination.page - 1);
+                    }}
+                    className={pagination.page <= 1 ? 'pointer-events-none opacity-50' : ''}
+                  />
+                </PaginationItem>
+                
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  // Always show 5 page numbers, centered around current page
+                  let pageNum;
+                  if (totalPages <= 5) {
+                    pageNum = i + 1;
+                  } else if (pagination.page <= 3) {
+                    pageNum = i + 1;
+                  } else if (pagination.page >= totalPages - 2) {
+                    pageNum = totalPages - 4 + i;
+                  } else {
+                    pageNum = pagination.page - 2 + i;
+                  }
+                  
+                  return (
+                    <PaginationItem key={pageNum}>
+                      <PaginationLink 
+                        href="#"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          handlePageChange(pageNum);
+                        }}
+                        isActive={pageNum === pagination.page}
+                      >
+                        {pageNum}
+                      </PaginationLink>
+                    </PaginationItem>
+                  );
+                })}
+                
+                <PaginationItem>
+                  <PaginationNext 
+                    href="#" 
+                    onClick={(e) => {
+                      e.preventDefault();
+                      if (pagination.page < totalPages) handlePageChange(pagination.page + 1);
+                    }}
+                    className={pagination.page >= totalPages ? 'pointer-events-none opacity-50' : ''}
+                  />
+                </PaginationItem>
+              </PaginationContent>
+            </Pagination>
+            
+            <div className="mt-2 text-sm text-gray-500 text-center">
+              Showing {(pagination.page - 1) * pagination.pageSize + 1} to{' '}
+              {Math.min(pagination.page * pagination.pageSize, tasksData.total)} of {tasksData.total} tasks
+            </div>
+          </div>
+        )}
         <div className="divide-y divide-gray-100">
           {tasks.length > 0 ? (
             tasks.map((task) => (

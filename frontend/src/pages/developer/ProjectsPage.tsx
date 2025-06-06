@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient, UseMutationResult } from '@tanstack/react-query';
-import { Loader2, AlertCircle, Calendar, Folder, MessageSquare, Trash2 } from 'lucide-react';
+import { Loader2, AlertCircle, Calendar, Folder, MessageSquare, Trash2, Edit2, X, Save } from 'lucide-react'; 
 import { toast } from 'sonner';
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
@@ -12,7 +12,7 @@ import { format, formatDistanceToNow } from 'date-fns';
 import api from '@/services/api';
 import { ProjectDetailsDialog } from '@/components/projects/ProjectDetailsDialog';
 import type { Project } from '@/types/project';
-import { Comment, createComment, getProjectComments, deleteComment } from '@/services/comment.service';
+import { Comment, createComment, getProjectsComments, deleteComment } from '@/services/comment.service';
 import {
   Select,
   SelectContent,
@@ -27,11 +27,17 @@ type UserRole = {
   description?: string;
 };
 
-type User = {
+interface User {
   id: number | string;
   name: string;
   email: string;
   roles?: UserRole[];
+}
+
+interface ProjectMember {
+  id: number | string;
+  role: string | UserRole;
+  user?: User;
 };
 
 type CommentMutationVariables = {
@@ -89,10 +95,41 @@ export function ProjectsPage() {
   const [commentingProject, setCommentingProject] = useState<Project | null>(null);
   const [commentText, setCommentText] = useState('');
   const [projectComments, setProjectComments] = useState<Record<number, Comment[]>>({});
+  const [editingComment, setEditingComment] = useState<{id: number | null, content: string}>({id: null, content: ''});
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const updateProjectStatus = useUpdateProjectStatus();
-  const { socket } = useSocket();
+  const { socket, emitNotification } = useSocket();
   const queryClient = useQueryClient();
+  const { user: currentUser } = useAuth();
+
+  // Function to send a test notification
+  const sendTestNotification = useCallback(() => {
+    if (!socket || !emitNotification) {
+      toast.error('WebSocket not connected');
+      return;
+    }
+    
+    const testNotification = {
+      userIds: [], // Empty array will be treated as broadcast
+      message: 'This is a test notification from the developer',
+      type: 'test',
+      projectId: selectedProject?.id || 0,
+      link: selectedProject?.id ? `/projects/${selectedProject.id}` : '/',
+      metadata: {
+        test: true,
+        timestamp: new Date().toISOString(),
+        projectName: selectedProject?.name || 'Test Project'
+      }
+    };
+    
+    console.log('Sending test notification:', testNotification);
+    const success = emitNotification(testNotification);
+    if (success) {
+      toast.success('Test notification sent to all testers!');
+    } else {
+      toast.error('Failed to send test notification');
+    }
+  }, [socket, selectedProject, emitNotification]);
 
   // Fetch the user's projects
   const { 
@@ -139,27 +176,27 @@ export function ProjectsPage() {
     enabled: !!user?.id,
   });
 
-  // Fetch comments for all projects
+  // Fetch comments for all projects in a single request
   useEffect(() => {
-    const fetchComments = async () => {
+    const fetchAllComments = async () => {
       if (projects?.length) {
-        const commentsMap: Record<number, Comment[]> = {};
-        
-        for (const project of projects) {
-          try {
-            const comments = await getProjectComments(project.id);
-            commentsMap[project.id] = comments;
-          } catch (error) {
-            console.error(`Failed to fetch comments for project ${project.id}:`, error);
-            commentsMap[project.id] = [];
-          }
+        try {
+          const projectIds = projects.map(p => p.id);
+          const commentsMap = await getProjectsComments(projectIds);
+          setProjectComments(commentsMap);
+        } catch (error) {
+          console.error('Failed to fetch project comments:', error);
+          // Fallback to empty comments on error
+          const emptyComments = projects.reduce((acc, project) => ({
+            ...acc,
+            [project.id]: []
+          }), {} as Record<number, Comment[]>);
+          setProjectComments(emptyComments);
         }
-        
-        setProjectComments(commentsMap);
       }
     };
     
-    fetchComments();
+    fetchAllComments();
   }, [projects]);
 
   // Listen for WebSocket events
@@ -265,6 +302,29 @@ export function ProjectsPage() {
     }
   });
 
+  // Update comment mutation
+  const updateCommentMutation = useMutation<Comment, Error, {commentId: number, content: string}>({
+    mutationFn: async ({ commentId, content }) => {
+      const response = await api.put(`/comments/${commentId}`, { content });
+      return response.data;
+    },
+    onSuccess: (updatedComment) => {
+      setProjectComments(prev => ({
+        ...prev,
+        [updatedComment.projectId]: (prev[updatedComment.projectId] || []).map(comment => 
+          comment.id === updatedComment.id ? updatedComment : comment
+        )
+      }));
+      setEditingComment({id: null, content: ''});
+      toast.success('Comment updated successfully');
+    },
+    onError: (error) => {
+      console.error('Failed to update comment:', error);
+      toast.error('Failed to update comment');
+    }
+  });
+
+  // Delete comment mutation
   const deleteCommentMutation = useMutation<unknown, Error, number, { projectId: number; commentId: number; previousComments: Comment[] } | null>({
     mutationFn: (commentId: number) => deleteComment(commentId),
     onMutate: async (commentId) => {
@@ -308,15 +368,84 @@ export function ProjectsPage() {
 
   const handleCommentSubmit = async (e: React.FormEvent, projectId: number) => {
     e.preventDefault();
-    if (!commentText.trim() || !commentingProject) return;
-    
+    if (!commentText.trim()) return;
+
     try {
-      await createCommentMutation.mutate({
+      const comment = await createCommentMutation.mutateAsync({
         projectId,
-        content: commentText.trim(),
+        content: commentText,
       });
+      
+      // Notify project members about the new comment
+      if (currentUser) {
+        const project = projects.find(p => p.id === projectId);
+        if (project && project.members) {
+          try {
+            // Get all testers who should be notified (except the comment author)
+            const testersToNotify = project.members.filter((member: ProjectMember) => {
+              if (member.id === currentUser.id) return false;
+              
+              const role = member.role;
+              if (!role) return false;
+              
+              // Handle both object and string role types
+              if (typeof role === 'object' && 'name' in role) {
+                return role.name?.toLowerCase() === 'tester';
+              } else if (typeof role === 'string') {
+                return role.toLowerCase() === 'tester';
+              }
+              
+              return false;
+            });
+
+            console.log('Testers to notify:', testersToNotify);
+
+            // Get unique user IDs of testers
+            const testerIds = Array.from(new Set(
+              testersToNotify.map(member => member.id.toString())
+            ));
+
+            console.log('Sending notifications to tester IDs:', testerIds);
+
+            // Send notification to testers
+            if (testerIds.length > 0) {
+              const notificationData = {
+                userIds: testerIds,
+                message: `New comment from ${currentUser.name}`,
+                type: 'comment',
+                link: `/projects/${project.id}`,
+                projectId: project.id,
+                commentId: comment.id,
+                metadata: {
+                  commentAuthor: currentUser.name,
+                  commentContent: commentText.length > 50 ? 
+                    `${commentText.substring(0, 50)}...` : commentText,
+                  projectName: project.name,
+                  timestamp: new Date().toISOString()
+                }
+              };
+              
+              console.log('Sending notification with data:', notificationData);
+              const notificationSent = emitNotification(notificationData);
+              console.log('Notification send result:', notificationSent ? 'Success' : 'Failed');
+              
+              if (!notificationSent) {
+                console.warn('Failed to send notification for new comment');
+              }
+            }
+          } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the comment submission if notification fails
+          }
+        }
+      }
+      
+      setCommentText('');
+      setCommentingProject(null);
+      
     } catch (error) {
       console.error('Failed to post comment:', error);
+      toast.error('Failed to post comment. Please try again.');
     }
   };
 
@@ -425,14 +554,12 @@ export function ProjectsPage() {
 
   return (
     <div className="container mx-auto p-4 max-w-6xl">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+      <div className="flex justify-between items-center mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">My Projects</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            {projects?.length || 0} {(projects?.length || 0) === 1 ? 'project' : 'projects'} you have access to
-          </p>
+          <h1 className="text-3xl font-bold tracking-tight">My Projects</h1>
+          <p className="text-muted-foreground">Manage your development projects and tasks</p>
         </div>
-        <div className="flex items-center gap-2 w-full sm:w-auto">
+        <div className="flex items-center space-x-4">
           <Select 
             value={statusFilter} 
             onValueChange={setStatusFilter}
@@ -596,22 +723,86 @@ export function ProjectsPage() {
                               {formatDistanceToNow(new Date(comment.createdAt), { addSuffix: true })}
                             </span>
                           </div>
-                          <p className="mt-1 text-sm">{comment.content}</p>
+                          {editingComment.id === comment.id ? (
+                            <div className="mt-2 w-full">
+                              <Textarea
+                                value={editingComment.content}
+                                onChange={(e) => setEditingComment({...editingComment, content: e.target.value})}
+                                className="w-full min-h-[80px] text-sm"
+                                autoFocus
+                              />
+                              <div className="flex justify-end space-x-2 mt-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setEditingComment({id: null, content: ''})}
+                                  disabled={updateCommentMutation.status === 'pending'}
+                                >
+                                  <X className="h-4 w-4 mr-1" />
+                                  Cancel
+                                </Button>
+                                <Button
+                                  variant="default"
+                                  size="sm"
+                                  onClick={() => updateCommentMutation.mutate({
+                                    commentId: comment.id,
+                                    content: editingComment.content
+                                  })}
+                                  disabled={!editingComment.content.trim() || updateCommentMutation.status === 'pending'}
+                                >
+                                  {updateCommentMutation.status === 'pending' ? (
+                                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                  ) : (
+                                    <Save className="h-4 w-4 mr-1" />
+                                  )}
+                                  Save
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="mt-1 text-sm">{comment.content}</p>
+                          )}
                         </div>
-                        {(String(user?.id) === String(comment.user.id) || 
-                        user?.roles?.some((role: UserRole) => 
-                          ['admin', 'project_manager'].includes(role?.name || '')
-                        )) && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6"
-                            onClick={(e) => handleDeleteComment(comment.id, e)}
-                            disabled={deleteCommentMutation.status === 'pending'}
-                          >
-                            <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
-                          </Button>
-                        )}
+                        <div className="flex space-x-1">
+                          {(() => {
+                            if (String(user?.id) === String(comment.user.id)) {
+                              return (
+                                <>
+                                  <button
+                                    onClick={() => setEditingComment({id: comment.id, content: comment.content})}
+                                    className="text-muted-foreground hover:text-primary p-1 rounded-full hover:bg-muted"
+                                    title="Edit comment"
+                                  >
+                                    <Edit2 className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    onClick={(e) => handleDeleteComment(comment.id, e)}
+                                    className="text-muted-foreground hover:text-destructive p-1 rounded-full hover:bg-muted"
+                                    title="Delete comment"
+                                    disabled={deleteCommentMutation.status === 'pending'}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                </>
+                              );
+                            } else if (user?.roles?.some((role: UserRole) => 
+                              ['admin', 'project_manager'].includes(role?.name || '')
+                            )) {
+                              return (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6"
+                                  onClick={(e) => handleDeleteComment(comment.id, e)}
+                                  disabled={deleteCommentMutation.status === 'pending'}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+                                </Button>
+                              );
+                            }
+                            return null;
+                          })()}
+                        </div>
                       </div>
                     </div>
                   ))}

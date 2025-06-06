@@ -23,22 +23,45 @@ class WebSocketService {
       // Already initialized
       return;
     }
-    // Create Socket.IO server
+    // Create Socket.IO server with enhanced CORS and logging
+    const allowedOrigins = process.env.FRONTEND_URL?.split(',').map(s => s.trim()) || [
+      'http://localhost:5173',
+      'http://localhost:3000',
+      'http://127.0.0.1:5173',
+      'http://127.0.0.1:3000',
+      'http://localhost:8000',
+      'http://127.0.0.1:8000'
+    ];
+
+    console.log('WebSocket allowed origins:', allowedOrigins);
+
     this.io = new Server(server, {
+      path: '/socket.io',
       cors: {
-        origin: process.env.FRONTEND_URL?.split(',') || [
-          'http://localhost:5173',
-          'http://localhost:3000',
-          'http://127.0.0.1:5173',
-          'http://127.0.0.1:3000'
-        ],
-        methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-        credentials: true,
-        allowedHeaders: ['Authorization', 'Content-Type']
+        origin: (origin, callback) => {
+          // Allow requests with no origin (like mobile apps or curl requests)
+          if (!origin) return callback(null, true);
+          
+          if (allowedOrigins.includes(origin)) {
+            console.log('Allowed origin:', origin);
+            return callback(null, true);
+          }
+          
+          console.warn('CORS blocked origin:', origin);
+          return callback(new Error('Not allowed by CORS'));
+        },
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+        credentials: true
       },
       allowEIO3: true,
-      transports: ['websocket', 'polling']
+      transports: ['websocket', 'polling'],
+      pingTimeout: 60000,
+      pingInterval: 25000,
+      cookie: false
     });
+    
+    console.log('WebSocket server initialized with path:', '/socket.io');
 
     // Use existing Redis clients for pub/sub
     this.io.adapter(createAdapter(
@@ -97,20 +120,162 @@ class WebSocketService {
 
     // Handle connection
     this.io.on('connection', (socket: any) => {
-      console.log(`User ${socket.user?.id} connected`);
+      console.log(`[WebSocket] New connection received. Socket ID: ${socket.id}`);
+      console.log('[WebSocket] Socket details:', {
+        handshake: {
+          headers: socket.handshake.headers,
+          query: socket.handshake.query,
+          auth: socket.handshake.auth
+        },
+        connected: socket.connected,
+        disconnected: socket.disconnected,
+        user: socket.user
+      });
       
-      // Join user to their own room for private messages
-      socket.join(`user_${socket.user.id}`);
-      
-      // Join user to admin room if they are an admin
-      const userRoles = socket.user?.roles || [];
-      if (userRoles.includes('admin') || userRoles.includes('ADMIN')) {
-        socket.join('admin');
+      if (!socket.user?.id) {
+        const error = new Error('No user ID found in socket');
+        console.error('[WebSocket] Connection rejected:', error.message);
+        socket.emit('auth_error', { message: 'Authentication failed: No user ID' });
+        socket.disconnect(true);
+        return;
       }
 
+      // Join user to their own room for private messages
+      const userRoom = `user_${socket.user.id}`;
+      
+      // Leave any existing rooms to prevent duplicates
+      const rooms = Object.keys(socket.rooms).filter(room => room !== socket.id);
+      if (rooms.length > 0) {
+        console.log(`[WebSocket] User ${socket.user.id} leaving existing rooms:`, rooms);
+        rooms.forEach(room => socket.leave(room));
+      }
+      
+      socket.join(userRoom, (err: Error | null) => {
+        if (err) {
+          console.error(`[WebSocket] Error joining room ${userRoom}:`, err);
+          return;
+        }
+        console.log(`[WebSocket] User ${socket.user.id} successfully joined room: ${userRoom}`);
+        console.log(`[WebSocket] User ${socket.user.id} current rooms:`, socket.rooms);
+        
+        // Acknowledge successful room join
+        socket.emit('room-joined', { room: userRoom, status: 'success' });
+      });
+      
+      // Join user to admin room if they are an admin
+      const userRoles = Array.isArray(socket.user?.roles) 
+        ? socket.user.roles 
+        : [];
+        
+      const isAdmin = userRoles.some((role: any) => 
+        role && (role.name === 'admin' || role === 'admin' || role.name === 'ADMIN' || role === 'ADMIN')
+      );
+      
+      if (isAdmin) {
+        const adminRoom = 'admin';
+        socket.join(adminRoom, (err: Error | null) => {
+          if (err) {
+            console.error(`[WebSocket] Error joining admin room:`, err);
+            return;
+          }
+          console.log(`[WebSocket] Admin user ${socket.user.id} joined admin room`);
+          socket.emit('room-joined', { room: adminRoom, status: 'success' });
+        });
+      }
+
+      // Log all rooms the user is in
+      socket.on('connect', () => {
+        console.log(`[WebSocket] User ${socket.user.id} connected to rooms:`, socket.rooms);
+      });
+      
+      // Handle join-room event (in case client sends it)
+      socket.on('join-room', (roomData: string | { room: string }, callback: Function) => {
+        // Handle both string and object formats for room
+        const room = typeof roomData === 'string' ? roomData : roomData?.room;
+        
+        if (!room) {
+          const error = 'No room specified in join-room event';
+          console.error(`[WebSocket] ${error}`, { roomData });
+          if (typeof callback === 'function') {
+            callback({ status: 'error', error });
+          }
+          return;
+        }
+        
+        console.log(`[WebSocket] User ${socket.user.id} requested to join room:`, room);
+        
+        // Leave any existing rooms with the same prefix to prevent duplicates
+        const roomPrefix = room.split('_')[0] + '_';
+        const roomsToLeave = Object.keys(socket.rooms).filter(
+          r => r !== socket.id && r.startsWith(roomPrefix)
+        );
+        
+        if (roomsToLeave.length > 0) {
+          console.log(`[WebSocket] Leaving existing rooms:`, roomsToLeave);
+          roomsToLeave.forEach(r => socket.leave(r));
+        }
+        
+        socket.join(room, (err: Error | null) => {
+          if (err) {
+            console.error(`[WebSocket] Error joining room ${room}:`, err);
+            if (typeof callback === 'function') {
+              callback({ status: 'error', error: err.message });
+            }
+            return;
+          }
+          
+          console.log(`[WebSocket] User ${socket.user.id} successfully joined room: ${room}`);
+          console.log(`[WebSocket] User ${socket.user.id} current rooms:`, socket.rooms);
+          
+          if (typeof callback === 'function') {
+            callback({ status: 'success', room });
+          }
+        });
+      });
+
+      // Handle notification event
+      socket.on('notification', (data: any) => {
+        console.log(`[WebSocket] Received notification for user ${socket.user.id}:`, data);
+        // Broadcast to all clients in the user's room
+        socket.to(userRoom).emit('notification', data);
+      });
+
+      // Handle send-notification event (from admin/developers)
+      socket.on('send-notification', (data: any) => {
+        console.log(`[WebSocket] Received send-notification from user ${socket.user.id}:`, data);
+        
+        const { userIds = [], ...notificationData } = data;
+        
+        // If no userIds are specified, broadcast to all connected clients
+        if (!userIds || userIds.length === 0) {
+          console.log('[WebSocket] Broadcasting notification to all connected clients');
+          this.io?.emit('notification', {
+            ...notificationData,
+            isBroadcast: true,
+            timestamp: new Date().toISOString()
+          });
+        } else {
+          // Otherwise, send to specific users
+          console.log(`[WebSocket] Sending notification to users:`, userIds);
+          userIds.forEach((userId: string | number) => {
+            this.io?.to(`user_${userId}`).emit('notification', {
+              ...notificationData,
+              targetUserId: userId,
+              timestamp: new Date().toISOString()
+            });
+          });
+        }
+      });
+
       // Handle disconnection
-      socket.on('disconnect', () => {
-        console.log(`User ${socket.user?.id} disconnected`);
+      socket.on('disconnect', (reason: string) => {
+        console.log(`[WebSocket] User ${socket.user?.id} disconnected. Reason: ${reason}`);
+        console.log(`[WebSocket] User ${socket.user?.id} was in rooms:`, socket.rooms);
+      });
+
+      // Log any errors
+      socket.on('error', (error: Error) => {
+        console.error(`[WebSocket] Error for user ${socket.user?.id}:`, error);
       });
 
       // Handle task events

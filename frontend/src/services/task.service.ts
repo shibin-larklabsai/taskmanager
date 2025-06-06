@@ -55,15 +55,7 @@ export interface CreateTaskData {
 
 export interface UpdateTaskData extends Partial<CreateTaskData> {}
 
-// API Responses
-interface PaginatedResponse<T> {
-  data: T[];
-  pagination: {
-    total: number;
-    page: number;
-    pages: number;
-  };
-}
+// API Responses will be handled by the return type of each function
 
 // Types for task filters
 export interface TaskFilters {
@@ -71,36 +63,61 @@ export interface TaskFilters {
   assignedToId?: number | string;
   status?: Task['status'];
   priority?: Task['priority'];
+  page?: number;
+  pageSize?: number;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
 }
 
 // API Calls
-export const getTasks = async (filters?: TaskFilters): Promise<Task[]> => {
-  const params = new URLSearchParams();
-  
-  if (filters?.projectIds?.length) {
-    // Convert all project IDs to strings and join with commas
-    const projectIdsStr = filters.projectIds.map(id => String(id)).join(',');
-    params.append('projectIds', projectIdsStr);
+export async function getTasks(filters: TaskFilters = {}): Promise<{ tasks: Task[]; total: number }> {
+  try {
+    const params: Record<string, string> = {};
+    
+    // Apply filters
+    if (filters.projectIds?.length) {
+      params.projectIds = filters.projectIds.join(',');
+    }
+    if (filters.assignedToId) {
+      params.assignedToId = String(filters.assignedToId);
+    }
+    if (filters.status) {
+      params.status = filters.status;
+    }
+    if (filters.priority) {
+      params.priority = filters.priority;
+    }
+    
+    // Add pagination
+    if (filters.page !== undefined) {
+      params.page = String(filters.page);
+    }
+    if (filters.pageSize !== undefined) {
+      params.pageSize = String(filters.pageSize);
+    }
+    
+    // Add sorting
+    if (filters.sortBy) {
+      params.sortBy = filters.sortBy;
+      params.sortOrder = filters.sortOrder || 'asc';
+    }
+    
+    const response = await api.get<{ tasks: Task[]; total: number }>('/tasks', { 
+      params,
+      paramsSerializer: {
+        indexes: null // Ensures array indices are not included in the query string
+      }
+    });
+    
+    return {
+      tasks: response.data.tasks || [],
+      total: response.data.total || 0
+    };
+  } catch (error) {
+    console.error('Error fetching tasks:', error);
+    throw error;
   }
-  
-  if (filters?.assignedToId) {
-    params.append('assignedToId', String(filters.assignedToId));
-  }
-  
-  if (filters?.status) {
-    params.append('status', filters.status);
-  }
-  
-  if (filters?.priority) {
-    params.append('priority', filters.priority);
-  }
-  
-  const queryString = params.toString();
-  const url = queryString ? `/tasks?${queryString}` : '/tasks';
-  
-  const response = await api.get<PaginatedResponse<Task>>(url);
-  return response.data.data;
-};
+}
 
 export const getTaskById = async (id: number): Promise<Task> => {
   const response = await api.get(`/tasks/${id}`);

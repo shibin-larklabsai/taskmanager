@@ -427,15 +427,6 @@ export function ProjectsPage() {
                 setSelectedProject(null);
                 setIsFormOpen(true);
               }}
-              className="mr-2"
-            >
-              Test Error Toast
-            </Button>
-            <Button 
-              onClick={() => {
-                setSelectedProject(null);
-                setIsFormOpen(true);
-              }}
             >
               Add Project
             </Button>

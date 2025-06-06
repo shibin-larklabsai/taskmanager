@@ -158,9 +158,39 @@ export function TesterProjectDetailPage() {
   // Mutation for deleting a comment
   const deleteCommentMutation = useMutation({
     mutationFn: (commentId: number) => deleteComment(commentId),
-    onSuccess: () => {
-      // Invalidate comments query to refetch
-      queryClient.invalidateQueries({ queryKey: ['project-comments', projectId] });
+    onMutate: async (commentId) => {
+      if (!projectId) return {};
+      
+      // Cancel any outgoing refetches to avoid overwriting our optimistic update
+      await queryClient.cancelQueries({ queryKey: ['project-comments', projectId] });
+      
+      // Snapshot the previous value
+      const previousComments = queryClient.getQueryData<Comment[]>(['project-comments', projectId]) || [];
+      
+      // Optimistically update the UI
+      setProjectComments(prev => ({
+        ...prev,
+        [Number(projectId)]: prev[Number(projectId)]?.filter(comment => comment.id !== commentId) || []
+      }));
+      
+      return { previousComments };
+    },
+    onError: (_err, _commentId, context: any) => {
+      if (!projectId) return;
+      
+      // Rollback on error
+      if (context?.previousComments) {
+        setProjectComments(prev => ({
+          ...prev,
+          [Number(projectId)]: context.previousComments
+        }));
+      }
+    },
+    onSettled: () => {
+      // Always refetch after error or success to ensure our cache is in sync
+      if (projectId) {
+        queryClient.invalidateQueries({ queryKey: ['project-comments', projectId] });
+      }
     }
   });
 
@@ -309,18 +339,24 @@ export function TesterProjectDetailPage() {
                   <MessageSquare className="h-5 w-5 mr-2" />
                   Comments
                 </h2>
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  onClick={() => setCommentingProject(project.id)}
-                  disabled={isCommenting}
-                >
-                  Add Comment
-                </Button>
+                {project.status === 'IN_PROGRESS' ? (
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => setCommentingProject(project.id)}
+                    disabled={isCommenting}
+                  >
+                    Add Comment
+                  </Button>
+                ) : (
+                  <div className="text-sm text-muted-foreground">
+                    Comments can only be added to projects that are in progress
+                  </div>
+                )}
               </div>
 
               {/* Comment Form */}
-              {isCommenting && (
+              {isCommenting && project.status === 'IN_PROGRESS' && (
                 <Card className="mb-6">
                   <CardContent className="pt-6">
                     <form onSubmit={(e) => handleCommentSubmit(e, project.id)}>
