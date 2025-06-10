@@ -1,7 +1,7 @@
 import api from '@/lib/api';
 
 export interface Comment {
-  id: number;
+  id: number | string; // Allow string for temporary IDs
   content: string;
   projectId: number;
   userId: number;
@@ -12,6 +12,7 @@ export interface Comment {
   };
   createdAt: string;
   updatedAt: string;
+  isOptimistic?: boolean; // Flag for optimistic updates
 }
 
 export const createComment = async (projectId: number, content: string): Promise<Comment> => {

@@ -59,10 +59,11 @@
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
-    "@types/express": "^5.0.0",
+    "@types/express": "^5.0.3",
+    "@types/express-serve-static-core": "^5.0.6",
     "@types/express-validator": "^2.20.33",
     "@types/jest": "^29.5.14",
-    "@types/node": "^20.17.52",
+    "@types/node": "^20.19.0",
     "@types/redis": "^4.0.10",
     "@types/validator": "^13.15.1",
     "@typescript-eslint/eslint-plugin": "^6.13.0",
