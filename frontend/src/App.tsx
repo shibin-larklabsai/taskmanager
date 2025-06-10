@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { Toaster } from 'sonner';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { SocketProvider } from '@/contexts/SocketContext';
+import { NotificationProvider } from '@/contexts/NotificationContext';
 import { LoginPage } from '@/pages/LoginPage';
 import { RegisterPage } from '@/pages/RegisterPage';
 import { DashboardPage } from '@/pages/DashboardPage';
@@ -302,14 +303,14 @@ function AppLayout() {
 // App Entry Point
 function App() {
   return (
-    <>
-      <Toaster position="top-right" richColors />
-      <AuthProvider>
-        <SocketProvider>
+    <AuthProvider>
+      <SocketProvider>
+        <NotificationProvider>
+          <Toaster position="top-right" />
           <AppLayout />
-        </SocketProvider>
-      </AuthProvider>
-    </>
+        </NotificationProvider>
+      </SocketProvider>
+    </AuthProvider>
   );
 }
 

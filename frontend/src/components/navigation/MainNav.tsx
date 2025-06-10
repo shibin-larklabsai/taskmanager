@@ -1,6 +1,7 @@
 import { Link, useNavigate, NavLink } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
+import { NotificationBell } from '@/components/notifications/NotificationBell';
 import { useEffect, useState } from 'react';
 
 export function MainNav() {
@@ -83,7 +84,10 @@ export function MainNav() {
             )}
           </nav>
         </div>
-        <div className="flex items-center space-x-4">
+        <div className="flex items-center space-x-2">
+          {(userRoles.isDeveloper || userRoles.isTester) && (
+            <NotificationBell />
+          )}
           <span className="text-sm text-muted-foreground">
             {user.name} ({user.email})
           </span>
