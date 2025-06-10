@@ -49,13 +49,36 @@ export function TesterProjectDetailPage() {
     enabled: !!projectId
   });
 
-  // Update comments when they're loaded
+  // Update comments when they're loaded, ensuring no duplicates
   useEffect(() => {
     if (projectId && comments.length > 0) {
-      setProjectComments(prev => ({
-        ...prev,
-        [projectId]: comments
-      }));
+      setProjectComments(prev => {
+        const projectIdNum = Number(projectId);
+        const currentComments = prev[projectIdNum] || [];
+        
+        // Keep any optimistic updates that aren't in the server response
+        const optimisticComments = currentComments.filter(comment => comment.isOptimistic);
+        const serverCommentIds = new Set(comments.map(c => c.id));
+        const remainingOptimistic = optimisticComments.filter(
+          comment => !serverCommentIds.has(comment.id as any)
+        );
+        
+        // Only update if there are actual changes
+        const mergedComments = [...remainingOptimistic, ...comments];
+        const hasChanges = 
+          mergedComments.length !== currentComments.length ||
+          mergedComments.some((comment, index) => 
+            currentComments[index]?.id !== comment.id ||
+            currentComments[index]?.content !== comment.content
+          );
+          
+        if (!hasChanges) return prev;
+        
+        return {
+          ...prev,
+          [projectIdNum]: mergedComments
+        };
+      });
     }
   }, [comments, projectId]);
 
@@ -105,9 +128,13 @@ export function TesterProjectDetailPage() {
     onMutate: async ({ projectId, content }) => {
       if (!user) throw new Error('User not authenticated');
       
-      // Create optimistic comment
+      // Cancel any outgoing refetches to avoid race conditions
+      await queryClient.cancelQueries({ queryKey: ['project-comments', projectId] });
+      
+      // Create optimistic comment with a unique temporary ID
+      const tempId = `temp-${Date.now()}`;
       const optimisticComment: Comment = {
-        id: -Date.now(),
+        id: tempId as any, // Temporary ID will be replaced by the server
         content,
         projectId,
         userId: Number(user.id),
@@ -117,39 +144,59 @@ export function TesterProjectDetailPage() {
           email: user.email || ''
         },
         createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
+        isOptimistic: true // Mark as optimistic update
       };
       
       // Update UI optimistically
-      setProjectComments(prev => ({
-        ...prev,
-        [projectId]: [optimisticComment, ...(prev[projectId] || [])]
-      }));
+      setProjectComments(prev => {
+        const existingComments = prev[projectId] || [];
+        // Don't add if this exact comment already exists
+        if (existingComments.some(c => c.isOptimistic && c.content === content)) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [projectId]: [optimisticComment, ...existingComments]
+        };
+      });
       
       return { optimisticComment, projectId };
     },
     onSuccess: (data, _variables, context) => {
       if (!context) return;
       
-      // Replace optimistic comment with server response
-      setProjectComments(prev => ({
-        ...prev,
-        [context.projectId]: prev[context.projectId].map(comment => 
-          comment.id === context.optimisticComment.id ? data : comment
-        )
-      }));
+      // Update the optimistic comment with the real data from the server
+      setProjectComments(prev => {
+        const currentComments = prev[context.projectId] || [];
+        return {
+          ...prev,
+          [context.projectId]: currentComments.map(comment => 
+            comment.isOptimistic && comment.content === data.content
+              ? { ...data, isOptimistic: false }
+              : comment
+          )
+        };
+      });
       
+      // Clear the comment input and reset state
       setCommentText('');
       setCommentingProject(null);
+      
+      // Invalidate and refetch the comments query to ensure consistency
+      queryClient.invalidateQueries({ 
+        queryKey: ['project-comments', context.projectId.toString()],
+        refetchType: 'active'
+      });
     },
     onError: (_err, _variables, context) => {
       if (!context) return;
       
-      // Rollback on error
+      // Remove the optimistic comment on error
       setProjectComments(prev => ({
         ...prev,
-        [context.projectId]: prev[context.projectId].filter(
-          comment => comment.id !== context.optimisticComment.id
+        [context.projectId]: (prev[context.projectId] || []).filter(
+          comment => !comment.isOptimistic || comment.content !== context.optimisticComment.content
         )
       }));
     }
@@ -208,19 +255,19 @@ export function TesterProjectDetailPage() {
     }
   };
 
-  const handleDeleteComment = async (commentId: number, e: React.MouseEvent) => {
+  const handleDeleteComment = async (commentId: number | string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!window.confirm('Are you sure you want to delete this comment?')) return;
 
     try {
-      await deleteCommentMutation.mutateAsync(commentId);
+      await deleteCommentMutation.mutateAsync(Number(commentId)); // Ensure commentId is a number
     } catch (error) {
       console.error('Failed to delete comment:', error);
     }
   };
 
   const handleStartEdit = (comment: Comment) => {
-    setEditingComment(comment.id);
+    setEditingComment(comment.id as number);
     setEditCommentText(comment.content);
   };
 
@@ -229,13 +276,13 @@ export function TesterProjectDetailPage() {
     setEditCommentText('');
   };
 
-  const handleSaveEdit = async (commentId: number, e: React.FormEvent) => {
+  const handleSaveEdit = async (commentId: number | string, e: React.FormEvent) => {
     e.preventDefault();
     if (!editCommentText.trim()) return;
     
     try {
       await updateCommentMutation.mutateAsync({
-        commentId,
+        commentId: Number(commentId), // Ensure commentId is a number
         content: editCommentText.trim()
       });
     } catch (error) {
@@ -286,8 +333,9 @@ export function TesterProjectDetailPage() {
     }
   };
 
-  const currentProjectComments = projectId ? projectComments[Number(projectId)] || [] : [];
-  const isCommenting = projectId ? commentingProject === Number(projectId) : false;
+  const projectIdNum = projectId ? Number(projectId) : 0;
+  const currentProjectComments = projectComments[projectIdNum] || [];
+  const isCommenting = commentingProject === projectIdNum;
 
   return (
     <div className="container mx-auto px-4 py-6 max-w-4xl">

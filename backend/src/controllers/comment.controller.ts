@@ -6,6 +6,7 @@ import User from '../models/user.model';
 import { AppError } from '../utils/errorHandler';
 import { Op } from 'sequelize';
 import NotificationService from '../services/notification.service';
+import { Socket } from 'socket.io';
 
 // Extend Express Request type to include io and user
 declare global {
@@ -102,62 +103,47 @@ export class CommentController {
         req.io.emit('comment:created', createdComment);
       }
 
-      // Send notifications to other project members
+      // Send notifications to other project members and testers
       try {
         const project = await Project.findByPk(projectId);
         if (project) {
-          // Get all developers and testers in the project
-          const members = await ProjectMember.findAll({
-            where: {
-              projectId,
-              userId: { [Op.ne]: userIdNum } // Exclude the comment author
-            },
-            include: [
-              {
-                model: User,
-                as: 'user',  // Add the alias that matches your association
-                attributes: ['id', 'name', 'email']
-              }
-            ]
+          // Get comment author info
+          const commentAuthor = await User.findByPk(userIdNum, {
+            attributes: ['id', 'name', 'email']
           });
 
-          // Send notifications
-          for (const member of members) {
-            // Get comment author info
-            const commentAuthor = await User.findByPk(userIdNum, {
-              attributes: ['id', 'name', 'email']
-            });
+          // Use the enhanced notification service which includes testers for IN_PROGRESS projects
+          const notifications = await NotificationService.notifyProjectMembers(
+            projectId,
+            userIdNum,
+            `New comment on project ${project.name}`,
+            'comment',
+            `/projects/${projectId}`,
+            createdComment.id
+          );
 
-            const notification = await NotificationService.createNotification({
-              userId: member.userId,
-              message: `New comment on project ${project.name}`,
-              type: 'comment',
-              link: `/projects/${projectId}`, // This will take user to the project with comments section open
-              projectId,
-              commentId: createdComment.id,
-              metadata: {
-                commentAuthor: commentAuthor?.name || 'A developer',
-                commentContent: content, // The actual comment content
-                projectName: project.name
-              }
-            });
-
-            // Emit notification via WebSocket (using underscore to match frontend)
-            if (req.io) {
-              const roomName = `user_${member.userId}`;
+          // Emit notifications via WebSocket
+          if (req.io) {
+            for (const notification of notifications) {
+              const roomName = `user_${notification.userId}`;
               const notificationData = {
-                ...notification,
+                ...notification.toJSON(),
                 isBroadcast: false,
-                targetUserId: member.userId
+                targetUserId: notification.userId,
+                metadata: {
+                  commentAuthor: commentAuthor?.name || 'A developer',
+                  commentContent: content,
+                  projectName: project.name
+                }
               };
               
               console.log(`[Comment] Sending notification to room: ${roomName}`, {
                 notificationId: notification.id,
-                userId: member.userId,
-                projectId: projectId,
+                userId: notification.userId,
+                projectId,
                 commentId: createdComment.id,
                 roomName,
-                socketRooms: req.io.sockets.adapter.rooms
+                isTesterNotification: notification.message.startsWith('[Tester Notification]')
               });
               
               try {
@@ -174,38 +160,34 @@ export class CommentController {
                   ...notificationData,
                   isBroadcast: true
                 });
-                console.log(`[Comment] Global notification broadcast for user ${member.userId}`);
-                
-                // Debug: List all rooms
-                const rooms = Array.from(req.io.sockets.adapter.rooms.keys())
-                  .filter(room => room.startsWith('user_'));
-                console.log(`[Comment] Current user rooms:`, rooms);
+                console.log(`[Comment] Global notification broadcast for user ${notification.userId}`);
                 
               } catch (error) {
                 console.error(`[Comment] Error sending notification to room ${roomName}:`, error);
                 
                 // Fallback: Try sending directly to user ID
                 try {
-                  console.log(`[Comment] Attempting direct emit to user ID: ${member.userId}`);
-                  const sockets = await req.io.fetchSockets();
-                  const userSockets = sockets.filter(s => s.user?.id === member.userId);
-                  console.log(`[Comment] Found ${userSockets.length} sockets for user ${member.userId}`);
+                  console.log(`[Comment] Attempting direct emit to user ID: ${notification.userId}`);
+                  const sockets = (await req.io.fetchSockets()) as Socket[];
+                  const userSockets = sockets.filter((s: any) => s.user?.id === notification.userId);
+                  console.log(`[Comment] Found ${userSockets.length} sockets for user ${notification.userId}`);
                   
-                  userSockets.forEach(socket => {
+                  userSockets.forEach((socket: Socket) => {
                     socket.emit('notification', {
-                      ...notification,
+                      ...notification.toJSON(),
                       isDirect: true,
-                      targetUserId: member.userId
+                      targetUserId: notification.userId,
+                      metadata: notificationData.metadata
                     });
                   });
-                  console.log(`[Comment] Direct notification sent to user ${member.userId}`);
+                  console.log(`[Comment] Direct notification sent to user ${notification.userId}`);
                 } catch (fallbackError) {
-                  console.error(`[Comment] Fallback notification failed for user ${member.userId}:`, fallbackError);
+                  console.error(`[Comment] Fallback notification failed for user ${notification.userId}:`, fallbackError);
                 }
               }
-            } else {
-              console.error('[Comment] WebSocket server (req.io) is not available');
             }
+          } else {
+            console.error('[Comment] WebSocket server (req.io) is not available');
           }
         }
       } catch (error) {

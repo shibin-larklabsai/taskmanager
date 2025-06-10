@@ -3,6 +3,9 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { NotificationBell } from '@/components/notifications/NotificationBell';
 import { useEffect, useState } from 'react';
+import { Bell } from 'lucide-react';
+import { Badge } from '@/components/ui/badge'; 
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'; 
 
 export function MainNav() {
   const { user, logout } = useAuth();
@@ -84,9 +87,28 @@ export function MainNav() {
             )}
           </nav>
         </div>
+
         <div className="flex items-center space-x-2">
           {(userRoles.isDeveloper || userRoles.isTester) && (
             <NotificationBell />
+
+        <div className="flex items-center space-x-4">
+          {(userRoles.isDeveloper || userRoles.isTester) && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="relative">
+                  <Bell className="h-5 w-5" />
+                  <Badge variant="secondary" className="absolute -top-1 -right-1 h-5 w-5 rounded-full p-0 flex items-center justify-center">
+                    0
+                  </Badge>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem className="text-sm">
+                  No new notifications
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
           <span className="text-sm text-muted-foreground">
             {user.name} ({user.email})

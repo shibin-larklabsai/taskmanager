@@ -1,61 +1,73 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useQuery, useMutation, useQueryClient, UseMutationResult } from '@tanstack/react-query';
-import { Loader2, AlertCircle, Calendar, Folder, MessageSquare, Trash2, Edit2, X, Save } from 'lucide-react'; 
+import { useState, useCallback } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSocket } from '@/contexts/SocketContext';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { format, formatDistanceToNow } from 'date-fns';
-import api from '@/services/api';
-import { ProjectDetailsDialog } from '@/components/projects/ProjectDetailsDialog';
-import type { Project } from '@/types/project';
-import { Comment, createComment, getProjectsComments, deleteComment } from '@/services/comment.service';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { AlertCircle } from 'lucide-react';
+import { api } from '@/lib/axios';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
-type UserRole = {
+// Define types
+type ProjectStatus = 'planning' | 'in_progress' | 'on_hold' | 'completed' | 'cancelled' | 'pending' | 'in_review' | 'blocked';
+
+interface NotificationType {
+  userIds: number[];
+  title: string;
+  message: string;
+  type: string;
+  link: string;
+}
+
+interface UserRole {
   id: number;
   name: string;
   description?: string;
-};
+}
 
 interface User {
-  id: number | string;
-  name: string;
-  email: string;
+  id: number;
+  name: string | null;
+  email: string | null;
   roles?: UserRole[];
 }
 
-interface ProjectMember {
+interface Comment {
   id: number | string;
-  role: string | UserRole;
-  user?: User;
-};
-
-type CommentMutationVariables = {
-  projectId: number;
   content: string;
-};
+  projectId: number;
+  userId: number;
+  user: User | { id: number; name: string | null; email: string | null };
+  createdAt: string;
+  updatedAt: string;
+  isOptimistic?: boolean;
+}
 
+interface ProjectMember {
+  id: number;
+  role: string;
+  user?: User | number;
+}
 
+interface Project {
+  id: number;
+  name: string;
+  status: ProjectStatus;
+  members?: ProjectMember[];
+  testers?: ProjectMember[];
+  createdAt?: string;
+  updatedAt?: string;
+  description?: string;
+  startDate?: string;
+  endDate?: string;
+}
 
-// Custom hook for project status updates
-function useUpdateProjectStatus() {
+const useUpdateProjectStatus = () => {
   const queryClient = useQueryClient();
   const { socket } = useSocket();
-  
+
   return useMutation({
-    mutationFn: async ({ projectId, status }: { projectId: number|string; status: string }) => {
+    mutationFn: async ({ projectId, status }: { projectId: number | string; status: string }) => {
       const response = await api.put(`/projects/${projectId}`, { status });
-      // Emit event to notify other clients
       if (socket) {
         socket.emit('project:status-updated', { projectId, status });
       }
@@ -63,22 +75,22 @@ function useUpdateProjectStatus() {
     },
     onMutate: async ({ projectId, status }) => {
       await queryClient.cancelQueries({ queryKey: ['user-projects'] });
-      
+
       const previousProjects = queryClient.getQueryData<Project[]>(['user-projects']);
-      
+
       if (previousProjects) {
-        queryClient.setQueryData<Project[]>(['user-projects'], (old = []) => 
-          old.map(project => 
-            project.id === projectId 
-              ? { ...project, status }
+        queryClient.setQueryData<Project[]>(['user-projects'], (old = []) =>
+          old.map((project) =>
+            project.id === projectId
+              ? { ...project, status } as Project
               : project
           )
         );
       }
-      
+
       return { previousProjects };
     },
-    onError: (_err, _variables, context) => {
+    onError: (_err: Error, _variables: { projectId: number | string; status: string }, context: { previousProjects?: Project[] } | undefined) => {
       if (context?.previousProjects) {
         queryClient.setQueryData(['user-projects'], context.previousProjects);
       }
@@ -87,390 +99,128 @@ function useUpdateProjectStatus() {
       queryClient.invalidateQueries({ queryKey: ['user-projects'] });
     },
   });
-}
+};
 
-export function ProjectsPage() {
+// Define types for comment mutations at the top level to avoid duplicates
+type CreateCommentVariables = {
+  projectId: number;
+  content: string;
+  userId: number;
+};
+
+type CreateCommentContext = {
+  previousComments: Record<number, Comment[]>;
+  optimisticComment?: Comment;
+};
+
+const ProjectsPage = () => {
   const { user } = useAuth() as { user: User | null };
-  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
-  const [commentingProject, setCommentingProject] = useState<Project | null>(null);
-  const [commentText, setCommentText] = useState('');
-  const [projectComments, setProjectComments] = useState<Record<number, Comment[]>>({});
-  const [editingComment, setEditingComment] = useState<{id: number | null, content: string}>({id: null, content: ''});
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const updateProjectStatus = useUpdateProjectStatus();
-  const { socket, emitNotification } = useSocket();
+  const { emitNotification } = useSocket() || {};
   const queryClient = useQueryClient();
-  const { user: currentUser } = useAuth();
-
-  // Function to send a test notification
-  const sendTestNotification = useCallback(() => {
-    if (!socket || !emitNotification) {
-      toast.error('WebSocket not connected');
-      return;
-    }
-    
-    const testNotification = {
-      userIds: [], // Empty array will be treated as broadcast
-      message: 'This is a test notification from the developer',
-      type: 'test',
-      projectId: selectedProject?.id || 0,
-      link: selectedProject?.id ? `/projects/${selectedProject.id}` : '/',
-      metadata: {
-        test: true,
-        timestamp: new Date().toISOString(),
-        projectName: selectedProject?.name || 'Test Project'
-      }
-    };
-    
-    console.log('Sending test notification:', testNotification);
-    const success = emitNotification(testNotification);
-    if (success) {
-      toast.success('Test notification sent to all testers!');
-    } else {
-      toast.error('Failed to send test notification');
-    }
-  }, [socket, selectedProject, emitNotification]);
-
-  // Fetch the user's projects
-  const { 
-    data: projects = [], 
-    error: projectsError, 
-    isLoading: isLoadingProjects,
-    refetch: refetchProjects 
-  } = useQuery<Project[]>({
-    queryKey: ['user-projects', user?.id],
-    queryFn: async () => {
-      if (!user?.id) {
-        console.log('No user ID, returning empty projects array');
-        return [];
-      }
-      
-      try {
-        console.log('Fetching projects for user:', user.id);
-        console.log('Auth token:', localStorage.getItem('token'));
-        
-        const response = await api.get(`/users/me/projects`, {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
-          }
-        });
-        
-        console.log('Projects API response status:', response.status);
-        console.log('Projects API response data:', response.data);
-        
-        if (!response.data) {
-          console.warn('Empty response data from projects API');
-          return [];
-        }
-        
-        return response.data.data || response.data || [];
-      } catch (error: any) {
-        console.error('Failed to fetch projects:', error);
-        if (error.response) {
-          console.error('Error response data:', error.response.data);
-          console.error('Error status:', error.response.status);
-        }
-        throw error;
-      }
-    },
-    enabled: !!user?.id,
-  });
-
-  // Fetch comments for all projects in a single request
-  useEffect(() => {
-    const fetchAllComments = async () => {
-      if (projects?.length) {
-        try {
-          const projectIds = projects.map(p => p.id);
-          const commentsMap = await getProjectsComments(projectIds);
-          setProjectComments(commentsMap);
-        } catch (error) {
-          console.error('Failed to fetch project comments:', error);
-          // Fallback to empty comments on error
-          const emptyComments = projects.reduce((acc, project) => ({
-            ...acc,
-            [project.id]: []
-          }), {} as Record<number, Comment[]>);
-          setProjectComments(emptyComments);
-        }
-      }
-    };
-    
-    fetchAllComments();
-  }, [projects]);
-
-  // Listen for WebSocket events
-  useEffect(() => {
-    if (!socket) return;
-
-    const handleStatusUpdate = ({ projectId, status }: { projectId: string | number; status: string }) => {
-      queryClient.setQueryData<Project[]>(['user-projects'], (old = []) => 
-        old.map(project => 
-          project.id === projectId 
-            ? { ...project, status }
-            : project
-        )
-      );
-    };
-
-    const handleNewComment = (comment: Comment) => {
-      setProjectComments(prev => ({
-        ...prev,
-        [comment.projectId]: [comment, ...(prev[comment.projectId] || [])]
-      }));
-    };
-
-    const handleDeletedComment = ({ id, projectId }: { id: number; projectId: number }) => {
-      setProjectComments(prev => ({
-        ...prev,
-        [projectId]: (prev[projectId] || []).filter(comment => comment.id !== id)
-      }));
-    };
-
-    socket.on('project:status-updated', handleStatusUpdate);
-    socket.on('comment:created', handleNewComment);
-    socket.on('comment:deleted', handleDeletedComment);
-
-    return () => {
-      socket.off('project:status-updated', handleStatusUpdate);
-      socket.off('comment:created', handleNewComment);
-      socket.off('comment:deleted', handleDeletedComment);
-    };
-  }, [socket, queryClient]);
-
-  const handleStatusChange = (projectId: number|string, status: string) => {
-    updateProjectStatus.mutate({ projectId, status });
-  };
-
-  const createCommentMutation: UseMutationResult<Comment, unknown, CommentMutationVariables> = useMutation({
-    mutationFn: ({ projectId, content }: CommentMutationVariables) => 
-      createComment(projectId, content),
-    onMutate: async ({ projectId, content }) => {
-      if (!user) return;
-      
-      // Create optimistic comment
-      const optimisticComment: Comment = {
-        id: -Date.now(), // Temporary negative ID to avoid conflicts
-        content,
+  
+  // State for comments and UI
+  const [commentText, setCommentText] = useState('');
+  const [commentingProject, setCommentingProject] = useState<number | null>(null);
+  const [editingComment, setEditingComment] = useState<{ id: string | number | null; content: string } | null>(null);
+  const [projectComments, setProjectComments] = useState<Record<number, Comment[]>>({});
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  
+  // Create comment mutation
+  const createCommentMutation = useMutation<Comment, Error, CreateCommentVariables, CreateCommentContext>({
+    mutationFn: async ({ projectId, content, userId }) => {
+      const response = await api.post(`/comments`, {
         projectId,
-        userId: Number(user.id),
-        user: {
-          id: Number(user.id),
-          name: user.name || 'Unknown User',
-          email: user.email || ''
-        },
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      } as Comment; // Cast to Comment to handle temporary ID
-      
-      // Update UI optimistically
-      setProjectComments(prev => ({
-        ...prev,
-        [projectId]: [optimisticComment, ...(prev[projectId] || [])]
-      }));
-      
-      // Save for potential rollback
-      return { optimisticComment, projectId };
-    },
-    onSuccess: (data, _variables, context) => {
-      if (!context) return;
-      
-      // Replace optimistic comment with server response
-      setProjectComments(prev => ({
-        ...prev,
-        [context.projectId]: prev[context.projectId].map(comment => 
-          comment.id === context.optimisticComment.id ? data : comment
-        )
-      }));
-      
-      setCommentText('');
-      setCommentingProject(null);
-    },
-    onError: (error, _variables, context) => {
-      if (!context) return;
-      
-      // Rollback on error
-      setProjectComments(prev => ({
-        ...prev,
-        [context.projectId]: prev[context.projectId].filter(
-          comment => comment.id !== context.optimisticComment.id
-        )
-      }));
-      
-      // Show error message
-      console.error('Failed to post comment:', error);
-    }
-  });
-
-  // Update comment mutation
-  const updateCommentMutation = useMutation<Comment, Error, {commentId: number, content: string}>({
-    mutationFn: async ({ commentId, content }) => {
-      const response = await api.put(`/comments/${commentId}`, { content });
+        content,
+        userId,
+      });
       return response.data;
     },
-    onSuccess: (updatedComment) => {
-      setProjectComments(prev => ({
-        ...prev,
-        [updatedComment.projectId]: (prev[updatedComment.projectId] || []).map(comment => 
-          comment.id === updatedComment.id ? updatedComment : comment
-        )
-      }));
-      setEditingComment({id: null, content: ''});
-      toast.success('Comment updated successfully');
-    },
-    onError: (error) => {
-      console.error('Failed to update comment:', error);
-      toast.error('Failed to update comment');
-    }
-  });
-
-  // Delete comment mutation
-  const deleteCommentMutation = useMutation<unknown, Error, number, { projectId: number; commentId: number; previousComments: Comment[] } | null>({
-    mutationFn: (commentId: number) => deleteComment(commentId),
-    onMutate: async (commentId) => {
-      // Find which project this comment belongs to
-      const projectId = Object.keys(projectComments).find(projectId => 
-        projectComments[parseInt(projectId)].some(comment => comment.id === commentId)
-      );
-      
-      if (!projectId) return null;
-      
-      // Save the current comments for potential rollback
-      const previousComments = projectComments[parseInt(projectId)];
-      
-      // Optimistically remove the comment
-      setProjectComments(prev => ({
-        ...prev,
-        [projectId]: prev[parseInt(projectId)].filter(comment => comment.id !== commentId)
-      }));
-      
-      // Return the context with the previous comments for rollback
-      return { projectId: parseInt(projectId), commentId, previousComments };
-    },
-    onError: (_error: Error, _commentId: number, context) => {
-      if (!context) return;
-      
-      // Revert back to the previous comments on error
-      setProjectComments(prev => ({
-        ...prev,
-        [context.projectId]: context.previousComments
-      }));
-      
-      console.error('Failed to delete comment:', _error);
-      toast.error('Failed to delete comment');
-    },
-    onSettled: () => {
-      // Invalidate and refetch comments to ensure UI is in sync with server
-      // This will run after either success or error
-      queryClient.invalidateQueries({ queryKey: ['project-comments'] });
-    }
-  });
-
-  const handleCommentSubmit = async (e: React.FormEvent, projectId: number) => {
-    e.preventDefault();
-    if (!commentText.trim()) return;
-
-    try {
-      const comment = await createCommentMutation.mutateAsync({
-        projectId,
-        content: commentText,
-      });
-      
-      // Notify project members about the new comment
-      if (currentUser) {
-        const project = projects.find(p => p.id === projectId);
-        if (project && project.members) {
-          try {
-            // Get all testers who should be notified (except the comment author)
-            const testersToNotify = project.members.filter((member: ProjectMember) => {
-              if (member.id === currentUser.id) return false;
-              
-              const role = member.role;
-              if (!role) return false;
-              
-              // Handle both object and string role types
-              if (typeof role === 'object' && 'name' in role) {
-                return role.name?.toLowerCase() === 'tester';
-              } else if (typeof role === 'string') {
-                return role.toLowerCase() === 'tester';
-              }
-              
-              return false;
-            });
-
-            console.log('Testers to notify:', testersToNotify);
-
-            // Get unique user IDs of testers
-            const testerIds = Array.from(new Set(
-              testersToNotify.map(member => member.id.toString())
-            ));
-
-            console.log('Sending notifications to tester IDs:', testerIds);
-
-            // Send notification to testers
-            if (testerIds.length > 0) {
-              const notificationData = {
-                userIds: testerIds,
-                message: `New comment from ${currentUser.name}`,
-                type: 'comment',
-                link: `/projects/${project.id}`,
-                projectId: project.id,
-                commentId: comment.id,
-                metadata: {
-                  commentAuthor: currentUser.name,
-                  commentContent: commentText.length > 50 ? 
-                    `${commentText.substring(0, 50)}...` : commentText,
-                  projectName: project.name,
-                  timestamp: new Date().toISOString()
-                }
-              };
-              
-              console.log('Sending notification with data:', notificationData);
-              const notificationSent = emitNotification(notificationData);
-              console.log('Notification send result:', notificationSent ? 'Success' : 'Failed');
-              
-              if (!notificationSent) {
-                console.warn('Failed to send notification for new comment');
-              }
-            }
-          } catch (notificationError) {
-            console.error('Error sending notification:', notificationError);
-            // Don't fail the comment submission if notification fails
-          }
-        }
-      }
-      
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projectComments'] });
       setCommentText('');
       setCommentingProject(null);
-      
+      toast.success('Comment added successfully');
+    },
+    onError: (error: Error) => {
+      console.error('Error creating comment:', error);
+      toast.error('Failed to add comment');
+    }
+  });
+
+  // Fetch projects
+  const { data: projects = [] } = useQuery<Project[]>({
+    queryKey: ['projects'],
+    queryFn: async () => {
+      const response = await api.get('/api/projects');
+      return response.data;
+    },
+  });
+
+  // Fetch and manage comments
+  const { data: commentsData } = useQuery<Record<number, Comment[]>>({
+    queryKey: ['projectComments'],
+    queryFn: async () => {
+      const response = await api.get('/api/comments');
+      const data = response.data;
+      const grouped = data.reduce((acc: Record<number, Comment[]>, comment: Comment) => {
+        if (!acc[comment.projectId]) {
+          acc[comment.projectId] = [];
+        }
+        acc[comment.projectId].push(comment);
+        return acc;
+      }, {});
+      setProjectComments(grouped);
+      return grouped;
+    },
+  });
+  
+  // Delete comment mutation
+  const deleteCommentMutation = useMutation({
+    mutationFn: async (commentId: number | string) => {
+      const response = await api.delete(`/comments/${commentId}`);
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projectComments'] });
+      toast.success('Comment deleted successfully');
+    },
+    onError: (error: Error) => {
+      console.error('Error deleting comment:', error);
+      toast.error('Failed to delete comment');
+    }
+  });
+  
+  // Handle comment submission
+  const handleCommentSubmit = useCallback(async (e: React.FormEvent, projectId: number) => {
+    e.preventDefault();
+    if (!commentText.trim() || !user?.id) return;
+    
+    try {
+      await createCommentMutation.mutateAsync({
+        projectId,
+        content: commentText,
+        userId: user.id,
+      });
     } catch (error) {
       console.error('Failed to post comment:', error);
-      toast.error('Failed to post comment. Please try again.');
+      // Error handling is done in the mutation's onError
     }
-  };
-
-  const handleDeleteComment = async (commentId: number, e: React.MouseEvent) => {
+  }, [commentText, user?.id, createCommentMutation]);
+  
+  // Handle comment deletion
+  const handleDeleteComment = async (commentId: number | string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (window.confirm('Are you sure you want to delete this comment?')) {
       try {
-        await deleteCommentMutation.mutate(commentId);
+        await deleteCommentMutation.mutateAsync(commentId);
       } catch (error) {
         console.error('Failed to delete comment:', error);
+        toast.error('Failed to delete comment');
       }
     }
   };
 
-  // Check if user is authenticated
-  if (!user) {
-    return (
-      <div className="flex flex-col items-center justify-center h-64 space-y-4">
-        <AlertCircle className="w-8 h-8 text-yellow-500" />
-        <span className="text-gray-600">Please sign in to view your projects</span>
-      </div>
-    );
-  }
-
-  // Check if token exists
   const token = localStorage.getItem('token');
   if (!token) {
     return (
@@ -481,38 +231,356 @@ export function ProjectsPage() {
     );
   }
 
-  // Loading state
-  if (isLoadingProjects) {
-    return (
-      <div className="flex flex-col items-center justify-center h-64 space-y-4">
-        <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-        <span className="text-gray-600">Loading your projects...</span>
-      </div>
-    );
-  }
-  
-  // Error state
-  if (projectsError) {
-    return (
-      <div className="p-4 bg-red-50 rounded-lg max-w-2xl mx-auto">
-        <div className="flex items-start text-red-700">
-          <AlertCircle className="w-5 h-5 mr-2 mt-0.5 flex-shrink-0" />
-          <div>
-            <p className="font-medium">Failed to load your projects</p>
-            <p className="text-sm text-red-600 mt-1">
-              {projectsError instanceof Error ? projectsError.message : 'An unknown error occurred'}
-            </p>
-          </div>
-        </div>
-        <Button 
-          onClick={() => refetchProjects()}
-          className="mt-3 px-4 py-2 text-sm bg-red-100 text-red-700 rounded-md hover:bg-red-200 transition-colors"
-        >
-          Retry
-        </Button>
-      </div>
-    );
-  }
+  // Update local state when commentsData changes
+  useEffect(() => {
+    if (commentsData && Object.keys(commentsData).length > 0) {
+      // Only update if there are no optimistic updates in progress
+      const hasOptimisticUpdates = Object.values(projectComments).some(
+        (comments) => comments?.some((comment) => comment.isOptimistic) ?? false
+      );
+
+      if (!hasOptimisticUpdates) {
+        setProjectComments(commentsData);
+      }
+    }
+  }, [commentsData, projectComments]);
+
+  // Function to send a test notification
+  const sendTestNotification = useCallback(async (project: Project) => {
+    if (!emitNotification) return;
+
+    try {
+      // Get all testers for the project
+      const testers = (project?.members || []).filter((member) => 
+        member.role === 'tester' || (member as any)?.role?.name === 'tester'
+      );
+
+      // Extract tester user IDs safely
+      const testerIds = testers
+        .map((tester) => {
+          if (tester.user) {
+            return typeof tester.user === 'object' ? tester.user.id : tester.user;
+          }
+          return null;
+        })
+        .filter((id): id is number => id !== null);
+
+      if (testerIds.length > 0) {
+        // Send notification to all testers
+        await Promise.all(
+          testerIds.map((testerId) =>
+            emitNotification({
+              userIds: [testerId],
+              title: 'New Comment',
+              message: `You have a new comment on project ${project.name || 'a project'}`,
+              type: 'comment',
+              link: `/projects/${project.id}`,
+            } as NotificationType)
+          )
+        );
+      }
+
+      toast.success(`Notification sent to ${testerIds.length} testers`);
+    } catch (error) {
+      console.error('Failed to send test notification:', error);
+      toast.error('Failed to send notification');
+    }
+  }, [emitNotification]);
+
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+
+  // Create comment mutation with proper typing
+  const createCommentMutation = useMutation<Comment, Error, CreateCommentVariables, CreateCommentContext>({
+    mutationFn: async ({ projectId, content, userId }) => {
+      const response = await api.post(`/comments`, {
+        projectId,
+        content,
+        userId,
+      });
+      return response.data;
+    },
+    onMutate: async ({ projectId, content }) => {
+      if (!user) return { projectId };
+
+      await queryClient.cancelQueries({ queryKey: ['projectComments'] });
+
+      const tempId = `temp-${Date.now()}`;
+      const optimisticComment: Comment = {
+        id: tempId,
+        content,
+        projectId,
+        userId: user.id,
+        user: user as User,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        isOptimistic: true,
+      };
+
+      // Optimistically update the UI
+      setProjectComments((prev: Record<number, Comment[]>) => ({
+        ...prev,
+        [projectId]: [...(prev[projectId] || []), optimisticComment],
+      }));
+
+      // Find the project to get its testers
+      const project = projects?.find((p) => p.id === projectId);
+      if (project?.members && emitNotification) {
+        project.members.forEach((member: ProjectMember) => {
+          const memberUserId = typeof member.user === 'object' ? member.user?.id : member.user;
+          if (member.role === 'tester' && memberUserId !== user?.id && memberUserId) {
+            emitNotification({
+              userIds: [memberUserId],
+              title: 'New Comment',
+              message: `${user?.name || 'A user'} commented on ${project.name}`,
+              type: 'comment',
+              link: `/projects/${projectId}`,
+            });
+          }
+        });
+      }
+
+      return { optimisticComment, projectId };
+    },
+    onSuccess: (data: Comment, { projectId }: { projectId: number }) => {
+      // Replace optimistic comment with server response
+      setProjectComments((prev: Record<number, Comment[]>) => ({
+        ...prev,
+        [projectId]: (prev[projectId] || [])
+          .filter((comment) => !comment.isOptimistic)
+          .concat(data)
+      }));
+      
+      // Find the project to get its testers
+      const project = projects?.find(p => p.id === projectId);
+      if (project?.testers && emitNotification) {
+        project.testers.forEach((tester: ProjectMember) => {
+          const testerUserId = typeof tester.user === 'object' ? tester.user?.id : tester.user;
+          if (testerUserId && testerUserId !== user?.id) {
+            emitNotification({
+              userIds: [testerUserId],
+              title: 'New Comment',
+              message: `${user?.name || 'A user'} commented on ${project.name}`,
+              type: 'comment',
+              link: `/projects/${projectId}`
+            });
+          }
+        });
+      }
+      
+      setCommentText('');
+      setCommentingProject(null);
+      toast.success('Comment added successfully');
+    },
+    onError: (error: Error, variables: CreateCommentVariables, context?: CreateCommentContext) => {
+      console.error('Failed to create comment:', error);
+      // Revert optimistic update on error
+      if (context?.optimisticComment) {
+        setProjectComments(prev => ({
+          ...prev,
+          [variables.projectId]: (prev[variables.projectId] || [])
+            .filter(comment => comment.id !== context.optimisticComment?.id)
+        }));
+      }
+      toast.error('Failed to add comment');
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['projectComments'] });
+    },
+    onMutate: async (variables: CreateCommentVariables) => {
+      const { projectId, content } = variables;
+      if (!user) return { projectId };
+
+      await queryClient.cancelQueries({ queryKey: ['projectComments'] });
+
+      const tempId = `temp-${Date.now()}`;
+      const optimisticComment: Comment = {
+        id: tempId,
+        content,
+        projectId,
+        userId: user.id,
+        user: user as User,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        isOptimistic: true,
+      };
+
+      // Optimistically update the UI
+      setProjectComments((prev: Record<number, Comment[]>) => ({
+        ...prev,
+        [projectId]: [...(prev[projectId] || []), optimisticComment],
+      }));
+
+      return { optimisticComment, projectId };
+    },
+    onSuccess: (data: Comment, variables: CreateCommentVariables) => {
+      // Replace optimistic comment with server response
+      setProjectComments((prev: Record<number, Comment[]>) => ({
+        ...prev,
+        [variables.projectId]: (prev[variables.projectId] || [])
+          .filter((comment) => !comment.isOptimistic)
+          .concat(data)
+      }));
+      
+      // Find the project to get its testers
+      const project = projects?.find((p: Project) => p.id === variables.projectId);
+      if (project?.testers && emitNotification) {
+        project.testers.forEach((tester: ProjectMember) => {
+          const testerUserId = typeof tester.user === 'object' ? tester.user?.id : tester.user;
+          if (testerUserId && testerUserId !== user?.id) {
+            emitNotification({
+              userIds: [testerUserId],
+              title: 'New Comment',
+              message: `${user?.name || 'A user'} commented on ${(project as Project).name}`,
+              type: 'comment',
+              link: `/projects/${variables.projectId}`
+            });
+          }
+        });
+      }
+      
+      setCommentText('');
+      setCommentingProject(null);
+      toast.success('Comment added successfully');
+    },
+    onError: (error: Error, variables: CreateCommentVariables, context?: CreateCommentContext) => {
+      console.error('Failed to create comment:', error);
+      // Revert optimistic update on error
+      if (context?.optimisticComment) {
+        setProjectComments(prev => ({
+          ...prev,
+          [variables.projectId]: (prev[variables.projectId] || [])
+            .filter(comment => comment.id !== context.optimisticComment?.id)
+        }));
+      }
+      toast.error('Failed to add comment');
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['projectComments'] });
+    }
+  });
+
+  const handleCommentSubmit = async (e: React.FormEvent, projectId: number) => {
+    e.preventDefault();
+    if (!commentText.trim() || !user?.id) return;
+
+    try {
+      await createCommentMutation.mutateAsync({
+        projectId,
+        content: commentText,
+      });
+      
+      // Notify project members about the new comment
+      const project = projects?.find(p => p.id === projectId);
+      if (project?.members) {
+          try {
+            // Get all testers who should be notified (except the comment author)
+            const testersToNotify = project.members.filter((member: ProjectMember) => {
+              if (member.id === user.id) return false;
+              
+              const role = member.role;
+              if (!role) return false;
+              
+              // Handle both object and string role types
+              if (typeof role === 'object' && 'name' in role) {
+                return role.name?.toLowerCase() === 'tester';
+              } else if (typeof role === 'string') {
+                return role.toLowerCase() === 'tester';
+              }
+              return false;
+            });
+            
+            // Send notifications to all testers
+            testersToNotify.forEach(tester => {
+              // Safely extract user ID from tester object
+              let userId: string | number | undefined;
+              
+              if (tester && typeof tester === 'object') {
+                if ('user' in tester && tester.user) {
+                  userId = typeof tester.user === 'object' ? tester.user.id : tester.user;
+                } else if ('id' in tester) {
+                  userId = tester.id;
+                }
+              }
+              
+              if (!userId) return; // Skip if no valid user ID found
+              
+              // Create a mutable array for userIds
+              const userIds = [userId];
+              
+              const notificationData = {
+                userIds,
+                title: 'New Comment',
+                message: `New comment on project ${project.name}`,
+                type: 'comment',
+                projectId: project.id
+              } as const;
+              
+              console.log('Sending notification with data:', notificationData);
+              const notificationSent = emitNotification(notificationData);
+              console.log('Notification send result:', notificationSent ? 'Success' : 'Failed');
+              
+              if (!notificationSent) {
+                console.warn('Failed to send notification for new comment');
+              }
+            });
+          } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the comment submission if notification fails
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to post comment:', error);
+      toast.error('Failed to post comment. Please try again.');
+    }
+    
+    setCommentText('');
+    setCommentingProject(null);
+  };
+
+  const handleSaveEdit = useCallback(async (projectId: number) => {
+    const currentEditingComment = editingComment;
+    if (!currentEditingComment?.id || !currentEditingComment?.content?.trim()) {
+      toast.error('Invalid comment data');
+      return;
+    }
+    
+    try {
+      // Only make API call if it's not a temporary ID
+      if (typeof editingComment.id === 'string' && editingComment.id.startsWith('temp-')) {
+        toast.error('Please wait for the comment to be saved before editing');
+        return;
+      }
+
+      // Update the comment in the UI immediately for better UX
+      setProjectComments(prev => ({
+        ...prev,
+        [projectId]: prev[projectId]?.map(comment => 
+          comment.id === editingComment.id 
+            ? { ...comment, content: editingComment.content } 
+            : comment
+        ) || []
+      }));
+      
+      // Update the comment on the server
+      await api.put(`/comments/${editingComment.id}`, {
+        content: editingComment.content
+      });
+      
+      // Refresh comments from the server
+      await queryClient.invalidateQueries({ queryKey: ['projectComments'] });
+      
+      setEditingComment(null);
+      toast.success('Comment updated successfully');
+    } catch (error) {
+      console.error('Failed to update comment:', error);
+      toast.error('Failed to update comment');
+      
+      // Revert the optimistic update on error
+      await queryClient.invalidateQueries({ queryKey: ['projectComments'] });
+    }
+  }, [editingComment, queryClient]);
 
   // Empty state
   if (projects.length === 0) {
@@ -713,18 +781,22 @@ export function ProjectsPage() {
                   </svg>
                 </summary>
                 <div className="mt-2">
-                  {projectComments[project.id]?.map((comment) => (
-                    <div key={comment.id} className="p-4 border-b last:border-b-0">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <div className="flex items-center space-x-2">
-                            <span className="font-medium text-sm">{comment.user.name}</span>
-                            <span className="text-xs text-muted-foreground">
-                              {formatDistanceToNow(new Date(comment.createdAt), { addSuffix: true })}
-                            </span>
-                          </div>
-                          {editingComment.id === comment.id ? (
-                            <div className="mt-2 w-full">
+                  {projectComments[project.id]?.length === 0 ? (
+                    <div className="p-4 text-center text-muted-foreground text-sm">
+                      No comments yet. Be the first to comment!
+                    </div>
+                  ) : (
+                    projectComments[project.id]?.map((comment) => (
+                      <div key={comment.id} className="p-4 border-b last:border-b-0">
+                        <div className="flex justify-between items-start">
+                          <div className="flex-1">
+                            <div className="flex items-center space-x-2">
+                              <span className="font-medium text-sm">
+                                {typeof comment.user === 'object' ? comment.user.name : 'Unknown User'}
+                              </span>
+                              <span className="text-xs text-muted-foreground">
+                                {formatDistanceToNow(new Date(comment.createdAt), { addSuffix: true })}
+                              </span>
                               <Textarea
                                 value={editingComment.content}
                                 onChange={(e) => setEditingComment({...editingComment, content: e.target.value})}
