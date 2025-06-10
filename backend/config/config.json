@@ -1,0 +1,27 @@
+{
+  "development": {
+    "username": "postgres",
+    "password": "shibin",
+    "database": "task_management",
+    "host": "localhost",
+    "port": 5432,
+    "dialect": "postgres",
+    "logging": true
+  },
+  "test": {
+    "username": "postgres",
+    "password": "shibin",
+    "database": "task_management_test",
+    "host": "localhost",
+    "port": 5432,
+    "dialect": "postgres"
+  },
+  "production": {
+    "username": "postgres",
+    "password": "shibin",
+    "database": "task_management_prod",
+    "host": "localhost",
+    "port": 5432,
+    "dialect": "postgres"
+  }
+}
