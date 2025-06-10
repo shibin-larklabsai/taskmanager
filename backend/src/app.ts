@@ -1,4 +1,4 @@
-import express, { Express, Request, Response, NextFunction } from 'express';
+import express, { Express, Request, Response, NextFunction, RequestHandler } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { createServer, Server } from 'http';
@@ -6,11 +6,12 @@ import { sequelize } from './config/database.js';
 import './models/index.js'; // Import models to register them with Sequelize
 import { webSocketService } from './services/websocket.service.js';
 
-// Extend the Request type to include cors property
+// Extend Express Request type to include io and user
 declare global {
   namespace Express {
     interface Request {
       cors?: boolean;
+      io?: any; // WebSocket server instance
     }
   }
 }
@@ -110,6 +111,13 @@ class App {
     // Parse JSON and URL-encoded bodies
     this.app.use(express.json({ limit: '50mb' }));
     this.app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+    
+    // Attach WebSocket server to request object
+    const attachWebSocket: RequestHandler = (req, _res, next) => {
+      req.io = webSocketService.getIO();
+      next();
+    };
+    this.app.use(attachWebSocket);
   }
 
   private async initializeRoutes(): Promise<void> {
@@ -168,12 +176,13 @@ class App {
     }
 
     // 404 handler
-    this.app.use((_req: Request, res: Response) => {
+    const notFoundHandler: express.RequestHandler = (_req, res) => {
       res.status(404).json({
         success: false,
         message: 'Resource not found',
       });
-    });
+    };
+    this.app.use(notFoundHandler);
   }
 
   private async initializeWebSocket(): Promise<void> {
@@ -188,18 +197,18 @@ class App {
 
   private initializeErrorHandling(): void {
     // Handle 404 errors
-    this.app.use((_req: Request, _res: Response, next: NextFunction) => {
+    this.app.use((_req, _res, next) => {
       const error = new Error('Not Found');
       (error as any).status = 404;
-      return next(error);
+      next(error);
     });
-
+    
     // Error handling middleware
-    this.app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+    this.app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
       // Check if headers have already been sent
       if (res.headersSent) {
         console.error('Headers already sent, cannot send error response');
-        return undefined;
+        return;
       }
 
       try {
@@ -208,7 +217,7 @@ class App {
         // Default to 500 if status not set
         const status = err.status || 500;
         let message = err.message || 'Internal Server Error';
-        
+
         // Handle specific error types
         if (err.name === 'JsonWebTokenError') {
           message = 'Invalid token';

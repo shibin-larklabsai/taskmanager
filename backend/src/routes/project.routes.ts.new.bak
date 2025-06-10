@@ -47,15 +47,14 @@ const projectSchema = Joi.object({
 const updateProjectSchema = Joi.object({
   name: Joi.string().min(3).max(100).label('Project Name'),
   description: Joi.string().allow('').max(500).label('Description'),
-  status: Joi.string().valid(
-    ProjectStatus.PLANNING,
-    ProjectStatus.IN_PROGRESS,
-    ProjectStatus.ON_HOLD,
-    ProjectStatus.COMPLETED,
-    ProjectStatus.CANCELLED
-  ).label('Status'),
+  status: Joi.string()
+    .valid(...Object.values(ProjectStatus))
+    .label('Status'),
   startDate: Joi.date().iso().allow(null).label('Start Date'),
-  endDate: Joi.date().iso().allow(null).label('End Date')
+  endDate: Joi.date()
+    .iso()
+    .allow(null)
+    .label('End Date')
     .when('startDate', {
       is: Joi.exist(),
       then: Joi.date().min(Joi.ref('startDate')),
@@ -64,15 +63,18 @@ const updateProjectSchema = Joi.object({
 }).min(1).label('Project Update Data');
 
 const projectMemberRoleSchema = Joi.object({
-  role: Joi.string().valid(...Object.values(ProjectRole)).default(ProjectRole.VIEWER).label('Role')
+  role: Joi.string()
+    .valid(...Object.values(ProjectRole))
+    .default(ProjectRole.VIEWER)
+    .label('Role')
 }).required().label('Project Member Role');
 
 // Validation middleware
-const validateRequest = (schema: Joi.ObjectSchema) => {
-  return (req: ExpressRequest, res: Response, next: NextFunction) => {
+const validateRequest = (schema: Joi.ObjectSchema): RequestHandler => {
+  return (req: Request, res: Response, next: NextFunction) => {
     const { error, value } = schema.validate(req.body, { 
       abortEarly: false,
-      allowUnknown: true,
+      allowUnknown: false,
       stripUnknown: true
     });
     
@@ -82,29 +84,23 @@ const validateRequest = (schema: Joi.ObjectSchema) => {
         message: detail.message.replace(/['"]/g, '')
       }));
       
-      return res.status(400).json({
+      res.status(400).json({
         success: false,
         message: 'Validation failed',
         errors
       });
+      return;
     }
     
     // Replace request body with validated value
-    req.body = value;
+    (req as any).body = value;
     next();
   };
 };
 
-const router = express.Router();
-
-// Apply auth middleware to all routes
-router.use((req, res, next) => {
-  (auth as any)(req, res, next).catch(next);
-});
-
-// Type guard function to check if request is authenticated
+// Type guard to check if user is authenticated
 const isAuthenticated = (req: ExpressRequest): req is AuthenticatedRequest => {
-  return !!req.user;
+  return !!(req as AuthenticatedRequest).user;
 };
 
 // Helper function to ensure request is authenticated
@@ -115,71 +111,76 @@ const ensureAuthenticated = (req: ExpressRequest): AuthenticatedRequest => {
   return req as AuthenticatedRequest;
 };
 
+const router = express.Router();
+
+// Apply auth middleware to all routes
+router.use(auth);
+
 // Create a new project
 router.post(
   '/',
   validateRequest(projectSchema),
-  (async (req: Request, res: Response, next: NextFunction) => {
+  async (req: Request, res: Response, next: NextFunction) => {
     try {
       const authReq = ensureAuthenticated(req);
-      await ProjectController.createProject(authReq as any, res);
+      await ProjectController.createProject(authReq, res);
     } catch (error) {
       next(error);
     }
-  }) as RequestHandler
+  }
 );
 
 // Get all projects for the current user with pagination
 router.get(
   '/',
-  (async (req: Request, res: Response, next: NextFunction) => {
+  async (req: Request, res: Response, next: NextFunction) => {
     try {
       const authReq = ensureAuthenticated(req);
-      await ProjectController.getProjects(authReq as any, res);
+      await ProjectController.getProjects(authReq, res);
     } catch (error) {
       next(error);
     }
-  }) as RequestHandler
+  }
 );
 
 // Get project by ID with members and testers
 router.get(
   '/:projectId',
-  (async (req: Request, res: Response, next: NextFunction) => {
+  async (req: Request, res: Response, next: NextFunction) => {
     try {
       const authReq = ensureAuthenticated(req);
-      await ProjectController.getProjectById(authReq as any, res);
+      await ProjectController.getProjectById(authReq, res);
     } catch (error) {
       next(error);
     }
-  }) as RequestHandler
+  }
 );
 
 // Update project
 router.put(
   '/:projectId',
   validateRequest(updateProjectSchema),
-  (async (req: Request, res: Response, next: NextFunction) => {
+  async (req: Request, res: Response, next: NextFunction) => {
     try {
       const authReq = ensureAuthenticated(req);
-      await ProjectController.updateProject(authReq as any, res);
+      await ProjectController.updateProject(authReq, res);
     } catch (error) {
       next(error);
     }
-  }) as RequestHandler
+  }
 );
 
-// Delete project (soft delete)
+// Delete project
 router.delete(
   '/:projectId',
-  (async (req: Request, res: Response, next: NextFunction) => {
+  async (req: Request, res: Response, next: NextFunction) => {
     try {
       const authReq = ensureAuthenticated(req);
-      await ProjectController.deleteProject(authReq as any, res);
+      await ProjectController.deleteProject(authReq, res);
     } catch (error) {
       next(error);
     }
-  }) as RequestHandler
+  }
 );
 
 export default router;

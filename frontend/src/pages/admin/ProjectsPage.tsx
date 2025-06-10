@@ -589,52 +589,56 @@ export function ProjectsPage() {
                 </TableCell>
               </TableRow>
             ) : (
-              filteredProjects.map((project, index) => (
-                <TableRow key={project.id}>
-                  <TableCell className="text-center text-muted-foreground">
-                    {index + 1}
-                  </TableCell>
-                  <TableCell className="font-medium">{project.name}</TableCell>
-                  <TableCell>
-                    <span className={cn(
-                      'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium',
-                      {
-                        'bg-blue-100 text-blue-800': project.status === 'PLANNING',
-                        'bg-yellow-100 text-yellow-800': project.status === 'IN_PROGRESS',
-                        'bg-green-100 text-green-800': project.status === 'COMPLETED',
-                        'bg-red-100 text-red-800': project.status === 'CANCELLED',
-                      }
-                    )}>
-                      {project.status.toLowerCase().replace('_', ' ')}
-                    </span>
-                  </TableCell>
-                  <TableCell>{formatDate(project.startDate)}</TableCell>
-                  <TableCell>{project.endDate ? formatDate(project.endDate) : '-'}</TableCell>
-                  <TableCell>
-                    <div className="flex gap-2">
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
-                        onClick={() => handleEditProject(project)}
-                        disabled={updateProjectMutation.isPending}
-                      >
-                        <Edit className="h-4 w-4 mr-1" />
-                        Edit
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
-                        className="text-destructive"
-                        onClick={() => handleDeleteClick(project)}
-                        disabled={deleteProjectMutation.isPending}
-                      >
-                        <Trash2 className="h-4 w-4 mr-1" />
-                        Delete
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))
+              filteredProjects.map((project, index) => {
+                // Generate a unique key using project ID, index, and current timestamp
+                const uniqueKey = `project-${project.id}-${index}-${Date.now()}`;
+                return (
+                  <TableRow key={uniqueKey}>
+                    <TableCell className="text-center text-muted-foreground">
+                      {index + 1}
+                    </TableCell>
+                    <TableCell className="font-medium">{project.name}</TableCell>
+                    <TableCell>
+                      <span className={cn(
+                        'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium',
+                        {
+                          'bg-blue-100 text-blue-800': project.status === 'PLANNING',
+                          'bg-yellow-100 text-yellow-800': project.status === 'IN_PROGRESS',
+                          'bg-green-100 text-green-800': project.status === 'COMPLETED',
+                          'bg-red-100 text-red-800': project.status === 'CANCELLED',
+                        }
+                      )}>
+                        {project.status.toLowerCase().replace('_', ' ')}
+                      </span>
+                    </TableCell>
+                    <TableCell>{formatDate(project.startDate)}</TableCell>
+                    <TableCell>{project.endDate ? formatDate(project.endDate) : '-'}</TableCell>
+                    <TableCell>
+                      <div className="flex gap-2">
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          onClick={() => handleEditProject(project)}
+                          disabled={updateProjectMutation.isPending}
+                        >
+                          <Edit className="h-4 w-4 mr-1" />
+                          Edit
+                        </Button>
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="text-destructive"
+                          onClick={() => handleDeleteClick(project)}
+                          disabled={deleteProjectMutation.isPending}
+                        >
+                          <Trash2 className="h-4 w-4 mr-1" />
+                          Delete
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>
